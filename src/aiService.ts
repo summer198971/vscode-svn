@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as https from 'https';
+import * as http from http;
 
 /**
  * AI服务类，用于生成SVN提交日志
@@ -474,7 +475,8 @@ ${truncatedDiff}
         }
       };
 
-      const req = https.request(options, (res) => {
+      const requestModule = url.protocol === 'https:' ? https : http;
+      const req = requestModule.request(options, (res) => {
         let data = '';
         
         res.on('data', (chunk) => {
