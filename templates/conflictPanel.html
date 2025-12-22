@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src {{cspSource}} 'unsafe-inline';">
+    <title>SVN冲突文件处理</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            color: var(--vscode-foreground);
+            background-color: var(--vscode-editor-background);
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .header {
+            border-bottom: 1px solid var(--vscode-panel-border);
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .header .folder-path {
+            color: var(--vscode-descriptionForeground);
+            font-size: 13px;
+        }
+
+        /* 扫描状态 */
+        .scanning-container {
+            text-align: center;
+            padding: 60px 20px;
+        }
+
+        .scanning-icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+
+        .scanning-text {
+            font-size: 16px;
+            margin-bottom: 30px;
+            color: var(--vscode-foreground);
+        }
+
+        .progress-bar {
+            width: 100%;
+            max-width: 400px;
+            height: 8px;
+            background-color: var(--vscode-progressBar-background);
+            border-radius: 4px;
+            margin: 0 auto 15px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background-color: var(--vscode-progressBar-background);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 13px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 10px;
+        }
+
+        .current-file {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
+        }
+
+        .button {
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 13px;
+            margin: 5px;
+        }
+
+        .button:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+
+        .button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .button-secondary {
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+
+        .button-secondary:hover {
+            background-color: var(--vscode-button-secondaryHoverBackground);
+        }
+
+        /* 冲突列表 */
+        .conflict-list-container {
+            margin-top: 20px;
+        }
+
+        .conflict-summary {
+            background-color: var(--vscode-input-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .conflict-summary h2 {
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+
+        .conflict-count {
+            font-size: 14px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .conflict-list {
+            list-style: none;
+        }
+
+        .conflict-item {
+            background-color: var(--vscode-input-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .conflict-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .conflict-file-name {
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--vscode-foreground);
+        }
+
+        .conflict-type {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            margin-left: 10px;
+        }
+
+        .conflict-type-text {
+            background-color: var(--vscode-notificationsWarningIcon-foreground);
+            color: var(--vscode-editor-background);
+        }
+
+        .conflict-type-tree {
+            background-color: var(--vscode-errorForeground);
+            color: var(--vscode-editor-background);
+        }
+
+        .conflict-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .conflict-path {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 10px;
+            word-break: break-all;
+        }
+
+        /* 批量操作 */
+        .batch-actions {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid var(--vscode-panel-border);
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        /* 完成状态 */
+        .completed-container {
+            text-align: center;
+            padding: 60px 20px;
+        }
+
+        .completed-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+
+        .completed-text {
+            font-size: 18px;
+            margin-bottom: 30px;
+            color: var(--vscode-foreground);
+        }
+
+        /* 解决中状态 */
+        .resolving-container {
+            padding: 20px;
+        }
+
+        .resolving-list {
+            list-style: none;
+            margin-top: 20px;
+        }
+
+        .resolving-item {
+            padding: 10px;
+            margin-bottom: 10px;
+            background-color: var(--vscode-input-background);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .resolving-icon {
+            font-size: 20px;
+        }
+
+        .resolving-file-name {
+            flex: 1;
+        }
+
+        /* 错误消息 */
+        .error-message {
+            background-color: var(--vscode-inputValidation-errorBackground);
+            border: 1px solid var(--vscode-inputValidation-errorBorder);
+            color: var(--vscode-errorForeground);
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <!-- 扫描状态 -->
+    <div id="scanningState" style="display: none;">
+        <div class="header">
+            <h1>SVN冲突扫描</h1>
+            <div class="folder-path">{{folderName}}</div>
+        </div>
+        <div class="scanning-container">
+            <div class="scanning-icon">🔍</div>
+            <div class="scanning-text">正在扫描文件夹...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="scanProgressFill"></div>
+            </div>
+            <div class="progress-text" id="scanProgressText">0%</div>
+            <div class="current-file" id="currentFile">准备开始扫描...</div>
+            <button class="button" id="cancelScanButton" onclick="cancelScan()">取消扫描</button>
+        </div>
+    </div>
+
+    <!-- 冲突列表状态 -->
+    <div id="listState" style="display: none;">
+        <div class="header">
+            <h1>SVN冲突文件处理</h1>
+            <div class="folder-path">{{folderName}}</div>
+        </div>
+        <div class="conflict-summary">
+            <h2>📋 冲突文件列表</h2>
+            <div class="conflict-count" id="conflictCount">扫描完成：发现 <span id="conflictCountNumber">0</span> 个冲突文件</div>
+        </div>
+        <div class="conflict-list-container">
+            <ul class="conflict-list" id="conflictList">
+                <!-- 冲突文件列表将在这里动态生成 -->
+            </ul>
+        </div>
+        <div class="batch-actions">
+            <button class="button" onclick="resolveAll('mine')">全部使用本地版本</button>
+            <button class="button" onclick="resolveAll('theirs')">全部使用服务器版本</button>
+            <button class="button button-secondary" onclick="refresh()">重新扫描</button>
+        </div>
+    </div>
+
+    <!-- 解决中状态 -->
+    <div id="resolvingState" style="display: none;">
+        <div class="header">
+            <h1>SVN冲突解决中...</h1>
+            <div class="folder-path">{{folderName}}</div>
+        </div>
+        <div class="resolving-container">
+            <div class="progress-bar">
+                <div class="progress-fill" id="resolveProgressFill"></div>
+            </div>
+            <div class="progress-text" id="resolveProgressText">0%</div>
+            <ul class="resolving-list" id="resolvingList">
+                <!-- 解决进度列表将在这里动态生成 -->
+            </ul>
+            <button class="button" id="cancelResolveButton" onclick="cancelResolve()">取消</button>
+        </div>
+    </div>
+
+    <!-- 完成状态 -->
+    <div id="completedState" style="display: none;">
+        <div class="header">
+            <h1>SVN冲突处理完成</h1>
+            <div class="folder-path">{{folderName}}</div>
+        </div>
+        <div class="completed-container">
+            <div class="completed-icon">✅</div>
+            <div class="completed-text">未发现冲突文件，工作副本状态正常</div>
+            <button class="button" onclick="refresh()">重新扫描</button>
+        </div>
+    </div>
+
+    <!-- 错误消息 -->
+    <div id="errorMessage" class="error-message" style="display: none;">
+        <strong>错误：</strong><span id="errorText"></span>
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        let conflictFiles = [];
+        let currentState = 'scanning';
+
+        // 初始化
+        window.addEventListener('DOMContentLoaded', () => {
+            // 根据初始状态显示对应界面
+            const state = '{{state}}';
+            if (state === 'scanning') {
+                showScanningState();
+            } else if (state === 'list') {
+                showListState();
+            } else if (state === 'resolving') {
+                showResolvingState();
+            } else {
+                showCompletedState();
+            }
+
+            // 如果有冲突文件数据，显示列表
+            try {
+                const files = JSON.parse('{{conflictFiles}}' || '[]');
+                if (files.length > 0) {
+                    conflictFiles = files;
+                    renderConflictList();
+                }
+            } catch (e) {
+                console.error('解析冲突文件数据失败:', e);
+            }
+        });
+
+        // 监听来自扩展的消息
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.command) {
+                case 'scanStarted':
+                    showScanningState();
+                    break;
+                
+                case 'scanProgress':
+                    updateScanProgress(message.currentFile, message.progress);
+                    break;
+                
+                case 'scanCompleted':
+                    conflictFiles = message.conflictFiles || [];
+                    showListState();
+                    renderConflictList();
+                    break;
+                
+                case 'scanError':
+                    showError(message.error);
+                    break;
+                
+                case 'resolveStarted':
+                    addResolvingFile(message.filePath);
+                    break;
+                
+                case 'resolveProgress':
+                    updateResolveProgress(message.currentFile, message.progress);
+                    break;
+                
+                case 'resolveCompleted':
+                    removeResolvingFile(message.filePath);
+                    updateConflictCount(message.remainingCount);
+                    if (message.remainingCount === 0) {
+                        showCompletedState();
+                    }
+                    break;
+                
+                case 'resolveAllStarted':
+                    showResolvingState();
+                    break;
+                
+                case 'resolveAllCompleted':
+                    conflictFiles = [];
+                    showCompletedState();
+                    break;
+                
+                case 'resolveError':
+                    showError(message.error);
+                    break;
+            }
+        });
+
+        // 显示扫描状态
+        function showScanningState() {
+            currentState = 'scanning';
+            document.getElementById('scanningState').style.display = 'block';
+            document.getElementById('listState').style.display = 'none';
+            document.getElementById('resolvingState').style.display = 'none';
+            document.getElementById('completedState').style.display = 'none';
+            hideError();
+        }
+
+        // 显示列表状态
+        function showListState() {
+            currentState = 'list';
+            document.getElementById('scanningState').style.display = 'none';
+            document.getElementById('listState').style.display = 'block';
+            document.getElementById('resolvingState').style.display = 'none';
+            document.getElementById('completedState').style.display = 'none';
+            hideError();
+        }
+
+        // 显示解决中状态
+        function showResolvingState() {
+            currentState = 'resolving';
+            document.getElementById('scanningState').style.display = 'none';
+            document.getElementById('listState').style.display = 'none';
+            document.getElementById('resolvingState').style.display = 'block';
+            document.getElementById('completedState').style.display = 'none';
+            hideError();
+        }
+
+        // 显示完成状态
+        function showCompletedState() {
+            currentState = 'completed';
+            document.getElementById('scanningState').style.display = 'none';
+            document.getElementById('listState').style.display = 'none';
+            document.getElementById('resolvingState').style.display = 'none';
+            document.getElementById('completedState').style.display = 'block';
+            hideError();
+        }
+
+        // 更新扫描进度
+        function updateScanProgress(currentFile, progress) {
+            document.getElementById('scanProgressFill').style.width = progress + '%';
+            document.getElementById('scanProgressText').textContent = progress + '%';
+            document.getElementById('currentFile').textContent = '当前文件: ' + currentFile;
+        }
+
+        // 更新解决进度
+        function updateResolveProgress(currentFile, progress) {
+            document.getElementById('resolveProgressFill').style.width = progress + '%';
+            document.getElementById('resolveProgressText').textContent = progress + '%';
+        }
+
+        // 渲染冲突列表
+        function renderConflictList() {
+            const list = document.getElementById('conflictList');
+            list.innerHTML = '';
+            
+            conflictFiles.forEach((file, index) => {
+                const item = document.createElement('li');
+                item.className = 'conflict-item';
+                
+                const conflictTypeText = file.conflictType === 'text' ? '文本冲突' : 
+                                         file.conflictType === 'tree' ? '树冲突' : '属性冲突';
+                const conflictTypeClass = file.conflictType === 'text' ? 'conflict-type-text' : 'conflict-type-tree';
+                
+                item.innerHTML = `
+                    <div class="conflict-item-header">
+                        <div>
+                            <span class="conflict-file-name">${index + 1}️⃣ ${getFileName(file.displayName)}</span>
+                            <span class="conflict-type ${conflictTypeClass}">⚠️ ${conflictTypeText}</span>
+                        </div>
+                    </div>
+                    <div class="conflict-path">${file.displayName}</div>
+                    <div class="conflict-actions">
+                        ${file.conflictType === 'text' ? `
+                            <button class="button" onclick="viewDiff('${file.path}')">查看对比</button>
+                            <button class="button" onclick="resolveConflict('${file.path}', 'mine')">使用本地版本</button>
+                            <button class="button" onclick="resolveConflict('${file.path}', 'theirs')">使用服务器版本</button>
+                        ` : `
+                            <button class="button" onclick="viewDiff('${file.path}')">查看详情</button>
+                            <button class="button" onclick="markResolved('${file.path}')">标记已解决</button>
+                        `}
+                    </div>
+                `;
+                
+                list.appendChild(item);
+            });
+            
+            updateConflictCount(conflictFiles.length);
+        }
+
+        // 更新冲突数量
+        function updateConflictCount(count) {
+            document.getElementById('conflictCountNumber').textContent = count;
+            if (count === 0) {
+                showCompletedState();
+            }
+        }
+
+        // 获取文件名
+        function getFileName(fullPath) {
+            const parts = fullPath.split(/[/\\]/);
+            return parts[parts.length - 1];
+        }
+
+        // 解决冲突
+        function resolveConflict(filePath, strategy) {
+            vscode.postMessage({
+                command: 'resolveConflict',
+                filePath: filePath,
+                strategy: strategy
+            });
+        }
+
+        // 标记已解决
+        function markResolved(filePath) {
+            vscode.postMessage({
+                command: 'markResolved',
+                filePath: filePath
+            });
+        }
+
+        // 批量解决
+        function resolveAll(strategy) {
+            vscode.postMessage({
+                command: 'resolveAll',
+                strategy: strategy
+            });
+        }
+
+        // 查看对比
+        function viewDiff(filePath) {
+            vscode.postMessage({
+                command: 'viewDiff',
+                filePath: filePath
+            });
+        }
+
+        // 刷新
+        function refresh() {
+            vscode.postMessage({
+                command: 'refresh'
+            });
+        }
+
+        // 取消扫描
+        function cancelScan() {
+            // 可以添加取消逻辑
+            showListState();
+        }
+
+        // 取消解决
+        function cancelResolve() {
+            showListState();
+        }
+
+        // 添加解决中的文件
+        function addResolvingFile(filePath) {
+            const list = document.getElementById('resolvingList');
+            const item = document.createElement('li');
+            item.className = 'resolving-item';
+            item.id = 'resolving-' + filePath.replace(/[^a-zA-Z0-9]/g, '-');
+            item.innerHTML = `
+                <span class="resolving-icon">⏳</span>
+                <span class="resolving-file-name">${getFileName(filePath)}</span>
+                <span>解决中...</span>
+            `;
+            list.appendChild(item);
+        }
+
+        // 移除解决中的文件
+        function removeResolvingFile(filePath) {
+            const item = document.getElementById('resolving-' + filePath.replace(/[^a-zA-Z0-9]/g, '-'));
+            if (item) {
+                item.innerHTML = `
+                    <span class="resolving-icon">✅</span>
+                    <span class="resolving-file-name">${getFileName(filePath)}</span>
+                    <span>已解决</span>
+                `;
+                setTimeout(() => {
+                    item.remove();
+                }, 1000);
+            }
+        }
+
+        // 显示错误
+        function showError(message) {
+            document.getElementById('errorMessage').style.display = 'block';
+            document.getElementById('errorText').textContent = message;
+        }
+
+        // 隐藏错误
+        function hideError() {
+            document.getElementById('errorMessage').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
+

@@ -17,6 +17,33 @@ interface SvnStatus {
 }
 
 /**
+ * 冲突文件信息
+ */
+export interface ConflictFile {
+  path: string;
+  displayName: string;
+  conflictType: 'text' | 'tree' | 'property';
+  status: string;
+}
+
+/**
+ * 冲突详情
+ */
+export interface ConflictDetails {
+  filePath: string;
+  conflictType: 'text' | 'tree' | 'property';
+  mineContent?: string;
+  theirsContent?: string;
+  baseContent?: string;
+  workingContent?: string;
+  conflictMarkers?: Array<{
+    start: number;
+    end: number;
+    type: 'mine' | 'theirs' | 'both';
+  }>;
+}
+
+/**
  * SVN服务类，负责执行SVN命令和管理SVN工作副本
  */
 export class SvnService {
@@ -1753,6 +1780,323 @@ export class SvnService {
         success: false,
         message: `检出操作失败: ${error.message}`
       };
+    }
+  }
+
+  /**
+   * 扫描文件夹中的冲突文件
+   * @param folderPath 文件夹路径
+   * @param progressCallback 进度回调函数
+   * @returns 冲突文件列表
+   */
+  public async scanConflicts(
+    folderPath: string,
+    progressCallback?: (currentFile: string, progress: number) => void
+  ): Promise<ConflictFile[]> {
+    this.showOutputChannel('SVN冲突扫描');
+    this.outputChannel.appendLine(`扫描路径: ${folderPath}`);
+    
+    try {
+      const conflictFiles: ConflictFile[] = [];
+      
+      // 执行 svn status 命令查找冲突文件
+      this.outputChannel.appendLine('正在执行SVN status命令查找冲突文件...');
+      const statusResult = await this.executeSvnCommand('status', folderPath, false);
+      
+      // 解析状态输出，查找状态为 'C' 的文件
+      const lines = statusResult.split('\n').map(line => line.trim()).filter(line => line);
+      
+      let processedCount = 0;
+      const totalLines = lines.length;
+      
+      for (const line of lines) {
+        // SVN status 输出格式：第一列是状态码，后面是文件路径
+        if (line.length === 0) continue;
+        
+        const status = line[0];
+        const match = line.match(/^.\s+(.+)$/);
+        const filePath = match ? match[1].trim() : line.substring(1).trim();
+        
+        if (status === 'C') {
+          // 找到冲突文件
+          const absolutePath = path.resolve(folderPath, filePath);
+          
+          // 检测冲突类型
+          const conflictType = await this._detectConflictType(absolutePath);
+          
+          conflictFiles.push({
+            path: absolutePath,
+            displayName: filePath,
+            conflictType,
+            status: '冲突'
+          });
+          
+          this.outputChannel.appendLine(`发现冲突文件: ${filePath} (${conflictType === 'text' ? '文本冲突' : conflictType === 'tree' ? '树冲突' : '属性冲突'})`);
+        }
+        
+        processedCount++;
+        if (progressCallback) {
+          const progress = Math.round((processedCount / totalLines) * 100);
+          progressCallback(filePath, progress);
+        }
+      }
+      
+      this.outputChannel.appendLine(`扫描完成，共发现 ${conflictFiles.length} 个冲突文件`);
+      this.outputChannel.appendLine('========== SVN冲突扫描完成 ==========');
+      
+      return conflictFiles;
+    } catch (error: any) {
+      this.outputChannel.appendLine(`错误: ${error.message}`);
+      this.outputChannel.appendLine('========== SVN冲突扫描失败 ==========');
+      throw error;
+    }
+  }
+
+  /**
+   * 检测冲突类型
+   * @param filePath 文件路径
+   * @returns 冲突类型
+   */
+  private async _detectConflictType(filePath: string): Promise<'text' | 'tree' | 'property'> {
+    try {
+      // 检查是否存在冲突标记文件
+      const mineFile = `${filePath}.mine`;
+      const theirsFile = `${filePath}.theirs`;
+      const workingFile = `${filePath}.working`;
+      
+      const hasMine = await fsExists(mineFile);
+      const hasTheirs = await fsExists(theirsFile);
+      const hasWorking = await fsExists(workingFile);
+      
+      // 如果存在这些文件，通常是文本冲突
+      if (hasMine || hasTheirs || hasWorking) {
+        return 'text';
+      }
+      
+      // 检查文件内容中是否有冲突标记
+      try {
+        const content = fs.readFileSync(filePath, 'utf8');
+        if (content.includes('<<<<<<<') && content.includes('=======') && content.includes('>>>>>>>')) {
+          return 'text';
+        }
+      } catch {
+        // 文件可能不存在或无法读取
+      }
+      
+      // 检查是否是树冲突（通过 svn info 或 status 详细信息）
+      try {
+        const infoResult = await this.executeSvnCommand(`info "${filePath}"`, path.dirname(filePath), false);
+        if (infoResult.includes('Tree conflict') || infoResult.includes('树冲突')) {
+          return 'tree';
+        }
+      } catch {
+        // 忽略错误
+      }
+      
+      // 默认返回文本冲突
+      return 'text';
+    } catch (error) {
+      this.outputChannel.appendLine(`[_detectConflictType] 检测冲突类型失败: ${error}`);
+      return 'text'; // 默认返回文本冲突
+    }
+  }
+
+  /**
+   * 获取冲突文件详情
+   * @param filePath 文件路径
+   * @returns 冲突详情
+   */
+  public async getConflictDetails(filePath: string): Promise<ConflictDetails> {
+    this.outputChannel.appendLine(`\n[getConflictDetails] 获取冲突详情: ${filePath}`);
+    
+    try {
+      const conflictType = await this._detectConflictType(filePath);
+      const details: ConflictDetails = {
+        filePath,
+        conflictType
+      };
+      
+      // 如果是文本冲突，尝试读取各个版本的内容
+      if (conflictType === 'text') {
+        try {
+          const mineFile = `${filePath}.mine`;
+          const theirsFile = `${filePath}.theirs`;
+          const workingFile = `${filePath}.working`;
+          
+          if (await fsExists(mineFile)) {
+            details.mineContent = fs.readFileSync(mineFile, 'utf8');
+          }
+          
+          if (await fsExists(theirsFile)) {
+            details.theirsContent = fs.readFileSync(theirsFile, 'utf8');
+          }
+          
+          if (await fsExists(workingFile)) {
+            details.workingContent = fs.readFileSync(workingFile, 'utf8');
+          }
+          
+          // 读取当前工作文件内容
+          if (await fsExists(filePath)) {
+            const currentContent = fs.readFileSync(filePath, 'utf8');
+            details.baseContent = currentContent;
+            
+            // 检测冲突标记位置
+            details.conflictMarkers = this._detectConflictMarkers(currentContent);
+          }
+        } catch (error: any) {
+          this.outputChannel.appendLine(`[getConflictDetails] 读取冲突文件内容失败: ${error.message}`);
+        }
+      }
+      
+      return details;
+    } catch (error: any) {
+      this.outputChannel.appendLine(`[getConflictDetails] 获取冲突详情失败: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * 检测冲突标记位置
+   * @param content 文件内容
+   * @returns 冲突标记位置数组
+   */
+  private _detectConflictMarkers(content: string): Array<{ start: number; end: number; type: 'mine' | 'theirs' | 'both' }> {
+    const markers: Array<{ start: number; end: number; type: 'mine' | 'theirs' | 'both' }> = [];
+    const lines = content.split('\n');
+    
+    let inConflict = false;
+    let conflictStart = 0;
+    let mineStart = 0;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      if (line.includes('<<<<<<<')) {
+        inConflict = true;
+        conflictStart = i;
+        mineStart = i;
+      } else if (line.includes('=======') && inConflict) {
+        // 中间分隔符
+      } else if (line.includes('>>>>>>>') && inConflict) {
+        markers.push({
+          start: conflictStart,
+          end: i,
+          type: 'both'
+        });
+        inConflict = false;
+      }
+    }
+    
+    return markers;
+  }
+
+  /**
+   * 解决冲突（使用指定策略）
+   * @param filePath 文件路径
+   * @param strategy 解决策略：mine(使用本地), theirs(使用服务器), working(使用工作副本)
+   */
+  public async resolveConflict(filePath: string, strategy: 'mine' | 'theirs' | 'working'): Promise<void> {
+    this.showOutputChannel('SVN冲突解决');
+    this.outputChannel.appendLine(`解决文件: ${filePath}`);
+    this.outputChannel.appendLine(`解决策略: ${strategy === 'mine' ? '使用本地版本' : strategy === 'theirs' ? '使用服务器版本' : '使用工作副本版本'}`);
+    
+    try {
+      // 特殊处理：如果文件名包含@符号，需要转义
+      let escapedPath = filePath;
+      if (filePath.includes('@')) {
+        escapedPath = `${filePath}@`;
+      }
+      
+      // 执行 svn resolve 命令
+      const cwd = path.dirname(filePath);
+      const fileName = path.basename(escapedPath);
+      
+      // 如果有自定义SVN根目录，检查是否需要使用它
+      if (this.getCustomSvnRoot()) {
+        try {
+          await this.executeSvnCommand('info', filePath);
+        } catch (error) {
+          const relativePath = path.relative(this.getCustomSvnRoot()!, filePath);
+          if (!relativePath.startsWith('..')) {
+            let finalPath = relativePath;
+            if (relativePath.includes('@')) {
+              finalPath = `${relativePath}@`;
+            }
+            const result = await this.executeSvnCommand(`resolve --accept ${strategy} "${finalPath}"`, this.getCustomSvnRoot()!);
+            this.outputChannel.appendLine(result);
+            this.outputChannel.appendLine('========== SVN冲突解决完成 ==========');
+            return;
+          }
+        }
+      }
+      
+      const result = await this.executeSvnCommand(`resolve --accept ${strategy} "${fileName}"`, cwd);
+      this.outputChannel.appendLine(result);
+      this.outputChannel.appendLine('========== SVN冲突解决完成 ==========');
+    } catch (error: any) {
+      this.outputChannel.appendLine(`错误: ${error.message}`);
+      this.outputChannel.appendLine('========== SVN冲突解决失败 ==========');
+      throw error;
+    }
+  }
+
+  /**
+   * 标记冲突已解决
+   * @param filePath 文件路径
+   */
+  public async markResolved(filePath: string): Promise<void> {
+    this.showOutputChannel('SVN标记冲突已解决');
+    this.outputChannel.appendLine(`文件: ${filePath}`);
+    
+    try {
+      // 使用 mine 策略标记已解决（假设用户已经手动编辑了文件）
+      await this.resolveConflict(filePath, 'mine');
+    } catch (error: any) {
+      this.outputChannel.appendLine(`错误: ${error.message}`);
+      this.outputChannel.appendLine('========== 标记冲突已解决失败 ==========');
+      throw error;
+    }
+  }
+
+  /**
+   * 批量解决冲突
+   * @param filePaths 文件路径数组
+   * @param strategy 解决策略
+   * @param progressCallback 进度回调函数
+   */
+  public async resolveConflicts(
+    filePaths: string[],
+    strategy: 'mine' | 'theirs' | 'working',
+    progressCallback?: (currentFile: string, progress: number) => void
+  ): Promise<void> {
+    this.showOutputChannel('SVN批量解决冲突');
+    this.outputChannel.appendLine(`文件数量: ${filePaths.length}`);
+    this.outputChannel.appendLine(`解决策略: ${strategy === 'mine' ? '使用本地版本' : strategy === 'theirs' ? '使用服务器版本' : '使用工作副本版本'}`);
+    
+    try {
+      for (let i = 0; i < filePaths.length; i++) {
+        const filePath = filePaths[i];
+        this.outputChannel.appendLine(`\n正在解决第 ${i + 1}/${filePaths.length} 个文件: ${filePath}`);
+        
+        if (progressCallback) {
+          const progress = Math.round(((i + 1) / filePaths.length) * 100);
+          progressCallback(filePath, progress);
+        }
+        
+        try {
+          await this.resolveConflict(filePath, strategy);
+        } catch (error: any) {
+          this.outputChannel.appendLine(`解决文件失败: ${filePath}, 错误: ${error.message}`);
+          // 继续处理下一个文件
+        }
+      }
+      
+      this.outputChannel.appendLine(`\n批量解决完成，共处理 ${filePaths.length} 个文件`);
+      this.outputChannel.appendLine('========== SVN批量解决冲突完成 ==========');
+    } catch (error: any) {
+      this.outputChannel.appendLine(`错误: ${error.message}`);
+      this.outputChannel.appendLine('========== SVN批量解决冲突失败 ==========');
+      throw error;
     }
   }
 }

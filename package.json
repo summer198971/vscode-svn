@@ -2,7 +2,7 @@
   "name": "vscode-svn-ai",
   "displayName": "VSCode SVN - AI智能版本控制",
   "description": "🚀 全平台SVN智能插件：基于原生命令行工具，支持Windows/macOS/Linux，内置AI提交日志生成，可视化差异对比，100%开源透明。无需TortoiseSVN，轻量级高性能！",
-  "version": "4.8.6",
+  "version": "4.9.0",
   "publisher": "pengfeiSummer",
   "icon": "resources/icon.png",
   "engines": {
@@ -29,6 +29,7 @@
       "onCommand:vscode-svn.configureFilter",
       "onCommand:vscode-svn.showFilterInfo",
       "onCommand:vscode-svn.checkout",
+      "onCommand:vscode-svn.scanAndResolveConflicts",
       "workspaceContains:.svn"
     ],
   "main": "./out/extension.js",
@@ -117,6 +118,10 @@
       {
         "command": "vscode-svn.clearCredentials",
         "title": "SVN: 清除认证信息"
+      },
+      {
+        "command": "vscode-svn.scanAndResolveConflicts",
+        "title": "SVN: 扫描并解决冲突"
       }
     ],
     "menus": {
@@ -175,6 +180,11 @@
           "command": "vscode-svn.checkout",
           "when": "explorerResourceIsFolder || !resourceScheme",
           "group": "2_svn@10"
+        },
+        {
+          "command": "vscode-svn.scanAndResolveConflicts",
+          "when": "explorerResourceIsFolder",
+          "group": "2_svn"
         }
       ],
       "editor/context": [
@@ -281,6 +291,11 @@
           "type": "boolean",
           "default": true,
           "description": "在日志列表中显示未提交到本地的修改"
+        },
+        "vscode-svn.showMissingFiles": {
+          "type": "boolean",
+          "default": false,
+          "description": "在文件夹提交面板中显示丢失的文件（SVN中存在但本地已删除的文件）"
         },
         "vscode-svn.excludeFiles": {
           "type": "array",

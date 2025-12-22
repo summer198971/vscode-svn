@@ -14,6 +14,7 @@ import { SvnCheckoutPanel } from './checkoutPanel';
 import { SvnCheckoutConfigPanel } from './checkoutConfigPanel';
 import { SvnAuthService } from './svnAuthService';
 import { SvnAuthDialog } from './svnAuthDialog';
+import { SvnConflictPanel } from './conflictPanel';
 
 // SVN服务实例
 let svnService: SvnService;
@@ -816,7 +817,62 @@ async function checkoutFromSvn(folderUri?: vscode.Uri): Promise<void> {
   }
 }
 
+/**
+ * 扫描并解决冲突
+ * @param folderUri 文件夹URI（可选）
+ */
+async function scanAndResolveConflicts(folderUri?: vscode.Uri): Promise<void> {
+  try {
+    // 检查SVN是否已安装
+    if (!await svnService.isSvnInstalled()) {
+      vscode.window.showErrorMessage('未检测到SVN命令行工具，请确保已安装SVN并添加到系统PATH中');
+      return;
+    }
 
+    // 确定文件夹路径
+    let folderPath: string;
+    if (folderUri) {
+      folderPath = folderUri.fsPath;
+    } else {
+      // 如果没有选择文件夹，使用当前工作区
+      if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+        folderPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+      } else {
+        vscode.window.showErrorMessage('请选择一个文件夹或打开工作区');
+        return;
+      }
+    }
+
+    // 检查文件夹是否在SVN工作副本中
+    if (!await svnService.isInWorkingCopy(folderPath)) {
+      const result = await vscode.window.showErrorMessage(
+        '该文件夹不在SVN工作副本中',
+        '设置SVN工作副本路径',
+        '取消'
+      );
+
+      if (result === '设置SVN工作副本路径') {
+        await setSvnWorkingCopyRoot();
+        // 重新检查
+        if (!await svnService.isInWorkingCopy(folderPath)) {
+          vscode.window.showErrorMessage('文件夹仍不在SVN工作副本中，请检查设置的路径是否正确');
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+
+    // 显示冲突处理面板
+    await SvnConflictPanel.createOrShow(
+      vscode.extensions.getExtension('vscode-svn')?.extensionUri || vscode.Uri.file(__dirname),
+      folderPath,
+      svnService
+    );
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`扫描冲突失败: ${error.message}`);
+  }
+}
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('VSCode SVN 扩展已激活');
@@ -1085,6 +1141,11 @@ export function activate(context: vscode.ExtensionContext) {
   const clearCredentialsCommand = vscode.commands.registerCommand('vscode-svn.clearCredentials', async () => {
     await clearCredentials(context);
   });
+
+  // 注册扫描并解决冲突命令
+  const scanAndResolveConflictsCommand = vscode.commands.registerCommand('vscode-svn.scanAndResolveConflicts', async (folderUri?: vscode.Uri) => {
+    await scanAndResolveConflicts(folderUri);
+  });
   
   context.subscriptions.push(
     uploadFileCommand,
@@ -1107,7 +1168,8 @@ export function activate(context: vscode.ExtensionContext) {
     configureAICommand,
     checkoutCommand,
     manageCredentialsCommand,
-    clearCredentialsCommand
+    clearCredentialsCommand,
+    scanAndResolveConflictsCommand
   );
 }
 

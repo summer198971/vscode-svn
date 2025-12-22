@@ -37,11 +37,12 @@ export class SvnFolderCommitPanel {
         this.aiService = new AiService();
         this.filterService = new SvnFilterService();
         this.templateManager = new TemplateManager(extensionUri);
+        this.outputChannel = vscode.window.createOutputChannel('SVN 文件夹提交');
+        
         this._update();
 
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
         this._setupMessageHandlers();
-        this.outputChannel = vscode.window.createOutputChannel('SVN 文件夹提交');
     }
 
     public static async createOrShow(
@@ -106,9 +107,14 @@ export class SvnFolderCommitPanel {
 
     private async _updateFileStatuses() {
         try {
+            this.outputChannel.appendLine(`\n[_updateFileStatuses] 开始更新文件状态`);
+            this.outputChannel.appendLine(`[_updateFileStatuses] 文件夹路径: ${this.folderPath}`);
+            
             // 使用原生格式获取状态
+            this.outputChannel.appendLine(`[_updateFileStatuses] 执行SVN status命令...`);
             const statusResult = await this.svnService.executeSvnCommand('status', this.folderPath, false);
             console.log('SVN status result:', statusResult);
+            this.outputChannel.appendLine(`[_updateFileStatuses] SVN status 原始输出长度: ${statusResult.length} 字符`);
             this.outputChannel.appendLine(`[_updateFileStatuses] SVN status 原始输出:\n${statusResult}`);
 
             // 首先处理所有文件状态
@@ -162,14 +168,36 @@ export class SvnFolderCommitPanel {
 
             // 应用过滤器排除不需要的文件
             this.outputChannel.appendLine(`[_updateFileStatuses] 开始应用过滤器，原始文件数量: ${allFileStatuses.length}`);
+            
+            // 先按文件类型分组统计
+            const statusCounts = allFileStatuses.reduce((counts, file) => {
+                counts[file.type] = (counts[file.type] || 0) + 1;
+                return counts;
+            }, {} as Record<string, number>);
+            
+            this.outputChannel.appendLine(`[_updateFileStatuses] 原始文件状态统计:`);
+            Object.entries(statusCounts).forEach(([type, count]) => {
+                this.outputChannel.appendLine(`  - ${type}: ${count} 个`);
+            });
+            
             const filteredFileStatuses = allFileStatuses.filter(fileStatus => {
+                // 检查是否显示丢失的文件
+                const config = vscode.workspace.getConfiguration('vscode-svn');
+                const showMissingFiles = config.get<boolean>('showMissingFiles', false);
+                
+                // 如果是丢失文件且配置不显示丢失文件，则排除
+                if (fileStatus.type === 'missing' && !showMissingFiles) {
+                    this.outputChannel.appendLine(`[_updateFileStatuses] 丢失文件被配置排除: ${fileStatus.displayName} (${fileStatus.status})`);
+                    return false;
+                }
+                
                 // 检查文件是否应该被排除
                 const shouldExclude = this.filterService.shouldExcludeFile(fileStatus.path, this.folderPath);
                 if (shouldExclude) {
                     console.log(`文件被过滤器排除: ${fileStatus.displayName}`);
-                    this.outputChannel.appendLine(`[_updateFileStatuses] 文件被过滤器排除: ${fileStatus.displayName} (${fileStatus.status})`);
+                    this.outputChannel.appendLine(`[_updateFileStatuses] 文件被过滤器排除: ${fileStatus.displayName} (${fileStatus.status}) - 类型: ${fileStatus.type}`);
                 } else {
-                    this.outputChannel.appendLine(`[_updateFileStatuses] 文件通过过滤器: ${fileStatus.displayName} (${fileStatus.status})`);
+                    this.outputChannel.appendLine(`[_updateFileStatuses] 文件通过过滤器: ${fileStatus.displayName} (${fileStatus.status}) - 类型: ${fileStatus.type}`);
                 }
                 return !shouldExclude;
             });
@@ -231,48 +259,84 @@ export class SvnFolderCommitPanel {
 
     private async _commitFiles(files: string[], message: string) {
         try {
+            this.outputChannel.appendLine(`\n========== 开始批量提交操作 ==========`);
+            this.outputChannel.appendLine(`[_commitFiles] 提交信息: ${message}`);
+            this.outputChannel.appendLine(`[_commitFiles] 选中文件总数: ${files.length}`);
+            this.outputChannel.appendLine(`[_commitFiles] 文件列表:`);
+            files.forEach((file, index) => {
+                this.outputChannel.appendLine(`  ${index + 1}. ${file}`);
+            });
+
             if (files.length === 0) {
                 throw new Error('请选择要提交的文件');
             }
 
-            // 先添加未版本控制的文件
-            const unversionedFiles = files.filter(file => 
-                this._fileStatuses.find(f => f.path === file)?.type === 'unversioned'
-            );
+            // 分类文件状态
+            const unversionedFiles: string[] = [];
+            const missingFiles: string[] = [];
+            const regularFiles: string[] = [];
             
-            if (unversionedFiles.length > 0) {
-                this.outputChannel.appendLine(`添加 ${unversionedFiles.length} 个未版本控制的文件`);
-                for (const file of unversionedFiles) {
-                    await this.svnService.addFile(file);
+            this.outputChannel.appendLine(`\n[_commitFiles] 开始分类文件状态...`);
+            files.forEach(file => {
+                const fileStatus = this._fileStatuses.find(f => f.path === file);
+                this.outputChannel.appendLine(`[_commitFiles] 处理文件: ${file}`);
+                this.outputChannel.appendLine(`[_commitFiles] 文件状态: ${fileStatus ? `${fileStatus.status} (${fileStatus.type})` : '未找到状态'}`);
+                
+                if (fileStatus?.type === 'unversioned') {
+                    unversionedFiles.push(file);
+                    this.outputChannel.appendLine(`[_commitFiles] -> 归类为未版本控制文件`);
+                } else if (fileStatus?.type === 'missing') {
+                    missingFiles.push(file);
+                    this.outputChannel.appendLine(`[_commitFiles] -> 归类为丢失文件`);
+                } else {
+                    regularFiles.push(file);
+                    this.outputChannel.appendLine(`[_commitFiles] -> 归类为常规文件 (${fileStatus?.type || 'unknown'})`);
                 }
+            });
+
+            this.outputChannel.appendLine(`\n[_commitFiles] 文件分类结果:`);
+            this.outputChannel.appendLine(`  - 未版本控制文件: ${unversionedFiles.length} 个`);
+            this.outputChannel.appendLine(`  - 丢失文件: ${missingFiles.length} 个`);
+            this.outputChannel.appendLine(`  - 常规文件: ${regularFiles.length} 个`);
+
+            // 批量添加未版本控制的文件（如果有的话）
+            if (unversionedFiles.length > 0) {
+                this.outputChannel.appendLine(`\n[_commitFiles] 开始批量添加 ${unversionedFiles.length} 个未版本控制的文件`);
+                unversionedFiles.forEach((file, index) => {
+                    this.outputChannel.appendLine(`  ${index + 1}. ${file}`);
+                });
+                await this._batchAddFiles(unversionedFiles);
+                this.outputChannel.appendLine(`[_commitFiles] 批量添加操作完成`);
             }
 
-            // 处理丢失的文件（missing files）- 需要先标记为删除
-            const missingFiles = files.filter(file => 
-                this._fileStatuses.find(f => f.path === file)?.type === 'missing'
-            );
-            
+            // 批量标记丢失的文件为删除状态（如果有的话）
             if (missingFiles.length > 0) {
-                this.outputChannel.appendLine(`标记 ${missingFiles.length} 个丢失的文件为删除状态`);
-                for (const file of missingFiles) {
-                    await this.svnService.removeFile(file);
-                }
+                this.outputChannel.appendLine(`\n[_commitFiles] 开始批量标记 ${missingFiles.length} 个丢失的文件为删除状态`);
+                missingFiles.forEach((file, index) => {
+                    this.outputChannel.appendLine(`  ${index + 1}. ${file}`);
+                });
+                await this._batchRemoveFiles(missingFiles);
+                this.outputChannel.appendLine(`[_commitFiles] 批量删除操作完成`);
             }
 
             // 分离文件和目录
+            this.outputChannel.appendLine(`\n[_commitFiles] 开始分离文件和目录...`);
             const fileEntries = await Promise.all(files.map(async file => {
                 // 检查文件是否是missing状态
                 const fileStatus = this._fileStatuses.find(f => f.path === file);
                 if (fileStatus?.type === 'missing') {
                     // missing文件已经不存在，视为文件（非目录）
+                    this.outputChannel.appendLine(`[_commitFiles] ${file} -> missing文件，视为非目录`);
                     return { path: file, isDirectory: false };
                 }
                 
                 try {
                     const isDirectory = (await vscode.workspace.fs.stat(vscode.Uri.file(file))).type === vscode.FileType.Directory;
+                    this.outputChannel.appendLine(`[_commitFiles] ${file} -> ${isDirectory ? '目录' : '文件'}`);
                     return { path: file, isDirectory };
                 } catch (error) {
                     // 如果文件不存在，视为文件（非目录）
+                    this.outputChannel.appendLine(`[_commitFiles] ${file} -> 文件不存在，视为非目录`);
                     return { path: file, isDirectory: false };
                 }
             }));
@@ -280,23 +344,59 @@ export class SvnFolderCommitPanel {
             const onlyFiles = fileEntries.filter(entry => !entry.isDirectory).map(entry => entry.path);
             const directories = fileEntries.filter(entry => entry.isDirectory).map(entry => entry.path);
             
-            // 如果只有文件，使用 commitFiles
-            if (onlyFiles.length > 0 && directories.length === 0) {
-                await this.svnService.commitFiles(onlyFiles, message, this.folderPath);
-            } 
-            // 如果有目录，或者混合了文件和目录，使用单独提交
-            else {
-                for (const file of files) {
-                    await this.svnService.commit(file, message);
+            this.outputChannel.appendLine(`[_commitFiles] 分离结果:`);
+            this.outputChannel.appendLine(`  - 文件: ${onlyFiles.length} 个`);
+            this.outputChannel.appendLine(`  - 目录: ${directories.length} 个`);
+            
+            // 一次性批量提交所有文件和目录
+            this.outputChannel.appendLine(`\n[_commitFiles] 开始执行提交操作...`);
+            this.outputChannel.appendLine(`[_commitFiles] 使用批量提交模式 (commitFiles)`);
+            this.outputChannel.appendLine(`[_commitFiles] 批量提交内容:`);
+            this.outputChannel.appendLine(`  - 文件: ${onlyFiles.length} 个`);
+            this.outputChannel.appendLine(`  - 目录: ${directories.length} 个`);
+            this.outputChannel.appendLine(`[_commitFiles] 批量提交列表:`);
+            files.forEach((file, index) => {
+                const isDir = directories.includes(file);
+                this.outputChannel.appendLine(`  ${index + 1}. ${file} ${isDir ? '(目录)' : '(文件)'}`);
+            });
+            
+            try {
+                await this.svnService.commitFiles(files, message, this.folderPath);
+                this.outputChannel.appendLine(`[_commitFiles] ✅ 批量提交成功: ${files.length} 个项目`);
+            } catch (error: any) {
+                // 如果批量提交失败，回退到逐个提交
+                this.outputChannel.appendLine(`[_commitFiles] ❌ 批量提交失败，回退到逐个提交模式`);
+                this.outputChannel.appendLine(`[_commitFiles] 批量提交错误: ${error.message}`);
+                
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    try {
+                        this.outputChannel.appendLine(`[_commitFiles] 逐个提交第 ${i + 1}/${files.length} 个: ${file}`);
+                        await this.svnService.commit(file, message);
+                        this.outputChannel.appendLine(`[_commitFiles] 第 ${i + 1} 个项目提交成功`);
+                    } catch (commitError: any) {
+                        this.outputChannel.appendLine(`[_commitFiles] ❌ 第 ${i + 1} 个项目提交失败: ${file}`);
+                        this.outputChannel.appendLine(`[_commitFiles] 错误信息: ${commitError.message}`);
+                        throw commitError;
+                    }
                 }
+                this.outputChannel.appendLine(`[_commitFiles] ✅ 逐个提交完成: ${files.length} 个项目`);
             }
 
             // 保存提交日志
+            this.outputChannel.appendLine(`\n[_commitFiles] 保存提交日志到本地存储`);
             this.logStorage.addLog(message, this.folderPath);
 
+            this.outputChannel.appendLine(`[_commitFiles] 提交操作全部完成`);
+            this.outputChannel.appendLine(`========== 批量提交操作结束 ==========\n`);
             vscode.window.showInformationMessage('文件已成功提交到SVN');
             this._panel.dispose();
         } catch (error: any) {
+            this.outputChannel.appendLine(`\n[_commitFiles] ❌ 提交操作发生错误:`);
+            this.outputChannel.appendLine(`[_commitFiles] 错误类型: ${error.constructor.name}`);
+            this.outputChannel.appendLine(`[_commitFiles] 错误信息: ${error.message}`);
+            this.outputChannel.appendLine(`[_commitFiles] 错误堆栈: ${error.stack || '无堆栈信息'}`);
+            this.outputChannel.appendLine(`========== 批量提交操作失败 ==========\n`);
             vscode.window.showErrorMessage(`提交失败: ${error.message}`);
         }
     }
@@ -629,6 +729,116 @@ export class SvnFolderCommitPanel {
                 return `<div>${line}</div>`;
             })
             .join('');
+    }
+
+    /**
+     * 批量添加文件到SVN
+     * @param files 要添加的文件路径数组
+     */
+    private async _batchAddFiles(files: string[]): Promise<void> {
+        this.outputChannel.appendLine(`\n[_batchAddFiles] 开始批量添加操作`);
+        this.outputChannel.appendLine(`[_batchAddFiles] 工作目录: ${this.folderPath}`);
+        this.outputChannel.appendLine(`[_batchAddFiles] 要添加的文件数量: ${files.length}`);
+        
+        try {
+            // 构建批量添加命令
+            const workingDir = this.folderPath;
+            this.outputChannel.appendLine(`[_batchAddFiles] 开始构建相对路径...`);
+            
+            const fileArgs = files.map((file, index) => {
+                const relativePath = path.relative(workingDir, file);
+                // 处理@符号转义
+                const escapedPath = relativePath.includes('@') ? `${relativePath}@` : relativePath;
+                const quotedPath = `"${escapedPath}"`;
+                
+                this.outputChannel.appendLine(`[_batchAddFiles] 文件 ${index + 1}: ${file}`);
+                this.outputChannel.appendLine(`[_batchAddFiles]   -> 相对路径: ${relativePath}`);
+                this.outputChannel.appendLine(`[_batchAddFiles]   -> 转义路径: ${escapedPath}`);
+                this.outputChannel.appendLine(`[_batchAddFiles]   -> 最终参数: ${quotedPath}`);
+                
+                return quotedPath;
+            }).join(' ');
+            
+            const command = `add ${fileArgs}`;
+            this.outputChannel.appendLine(`[_batchAddFiles] 执行SVN命令: svn ${command}`);
+            this.outputChannel.appendLine(`[_batchAddFiles] 工作目录: ${workingDir}`);
+            
+            await this.svnService.executeSvnCommand(command, workingDir);
+            this.outputChannel.appendLine(`[_batchAddFiles] ✅ 批量添加成功: ${files.length} 个文件`);
+        } catch (error: any) {
+            // 如果批量添加失败，回退到逐个添加
+            this.outputChannel.appendLine(`[_batchAddFiles] ❌ 批量添加失败，开始回退到逐个添加`);
+            this.outputChannel.appendLine(`[_batchAddFiles] 批量添加错误: ${error.message}`);
+            
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                try {
+                    this.outputChannel.appendLine(`[_batchAddFiles] 逐个添加第 ${i + 1}/${files.length} 个文件: ${file}`);
+                    await this.svnService.addFile(file);
+                    this.outputChannel.appendLine(`[_batchAddFiles] 第 ${i + 1} 个文件添加成功`);
+                } catch (addError: any) {
+                    this.outputChannel.appendLine(`[_batchAddFiles] ❌ 第 ${i + 1} 个文件添加失败: ${file}`);
+                    this.outputChannel.appendLine(`[_batchAddFiles] 错误信息: ${addError.message}`);
+                    throw addError;
+                }
+            }
+            this.outputChannel.appendLine(`[_batchAddFiles] ✅ 逐个添加完成: ${files.length} 个文件`);
+        }
+    }
+
+    /**
+     * 批量删除文件（标记为删除状态）
+     * @param files 要删除的文件路径数组
+     */
+    private async _batchRemoveFiles(files: string[]): Promise<void> {
+        this.outputChannel.appendLine(`\n[_batchRemoveFiles] 开始批量删除操作`);
+        this.outputChannel.appendLine(`[_batchRemoveFiles] 工作目录: ${this.folderPath}`);
+        this.outputChannel.appendLine(`[_batchRemoveFiles] 要删除的文件数量: ${files.length}`);
+        
+        try {
+            // 构建批量删除命令
+            const workingDir = this.folderPath;
+            this.outputChannel.appendLine(`[_batchRemoveFiles] 开始构建相对路径...`);
+            
+            const fileArgs = files.map((file, index) => {
+                const relativePath = path.relative(workingDir, file);
+                // 处理@符号转义
+                const escapedPath = relativePath.includes('@') ? `${relativePath}@` : relativePath;
+                const quotedPath = `"${escapedPath}"`;
+                
+                this.outputChannel.appendLine(`[_batchRemoveFiles] 文件 ${index + 1}: ${file}`);
+                this.outputChannel.appendLine(`[_batchRemoveFiles]   -> 相对路径: ${relativePath}`);
+                this.outputChannel.appendLine(`[_batchRemoveFiles]   -> 转义路径: ${escapedPath}`);
+                this.outputChannel.appendLine(`[_batchRemoveFiles]   -> 最终参数: ${quotedPath}`);
+                
+                return quotedPath;
+            }).join(' ');
+            
+            const command = `remove ${fileArgs}`;
+            this.outputChannel.appendLine(`[_batchRemoveFiles] 执行SVN命令: svn ${command}`);
+            this.outputChannel.appendLine(`[_batchRemoveFiles] 工作目录: ${workingDir}`);
+            
+            await this.svnService.executeSvnCommand(command, workingDir);
+            this.outputChannel.appendLine(`[_batchRemoveFiles] ✅ 批量删除成功: ${files.length} 个文件`);
+        } catch (error: any) {
+            // 如果批量删除失败，回退到逐个删除
+            this.outputChannel.appendLine(`[_batchRemoveFiles] ❌ 批量删除失败，开始回退到逐个删除`);
+            this.outputChannel.appendLine(`[_batchRemoveFiles] 批量删除错误: ${error.message}`);
+            
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                try {
+                    this.outputChannel.appendLine(`[_batchRemoveFiles] 逐个删除第 ${i + 1}/${files.length} 个文件: ${file}`);
+                    await this.svnService.removeFile(file);
+                    this.outputChannel.appendLine(`[_batchRemoveFiles] 第 ${i + 1} 个文件删除成功`);
+                } catch (removeError: any) {
+                    this.outputChannel.appendLine(`[_batchRemoveFiles] ❌ 第 ${i + 1} 个文件删除失败: ${file}`);
+                    this.outputChannel.appendLine(`[_batchRemoveFiles] 错误信息: ${removeError.message}`);
+                    throw removeError;
+                }
+            }
+            this.outputChannel.appendLine(`[_batchRemoveFiles] ✅ 逐个删除完成: ${files.length} 个文件`);
+        }
     }
 
     private async _revertFile(filePath: string): Promise<void> {

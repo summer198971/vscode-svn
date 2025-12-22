@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src {{cspSource}} 'unsafe-inline';">
+    <title>冲突对比: {{fileName}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            color: var(--vscode-foreground);
+            background-color: var(--vscode-editor-background);
+            padding: 20px;
+            line-height: 1.6;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            border-bottom: 1px solid var(--vscode-panel-border);
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .header .file-path {
+            color: var(--vscode-descriptionForeground);
+            font-size: 13px;
+            word-break: break-all;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .button {
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .button:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+
+        .button-secondary {
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+
+        .button-secondary:hover {
+            background-color: var(--vscode-button-secondaryHoverBackground);
+        }
+
+        .button-success {
+            background-color: var(--vscode-testing-iconPassed);
+            color: var(--vscode-editor-background);
+        }
+
+        /* 三路对比容器 */
+        .diff-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .diff-panel {
+            display: flex;
+            flex-direction: column;
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+            overflow: hidden;
+            background-color: var(--vscode-input-background);
+        }
+
+        .diff-panel-header {
+            background-color: var(--vscode-panel-border);
+            padding: 10px;
+            font-weight: 600;
+            font-size: 13px;
+            text-align: center;
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+
+        .diff-panel-header.mine {
+            background-color: var(--vscode-diffEditor-insertedTextBackground);
+        }
+
+        .diff-panel-header.theirs {
+            background-color: var(--vscode-diffEditor-removedTextBackground);
+        }
+
+        .diff-panel-header.base {
+            background-color: var(--vscode-editor-background);
+        }
+
+        .diff-content {
+            flex: 1;
+            overflow: auto;
+            padding: 10px;
+            font-family: var(--vscode-editor-font-family);
+            font-size: var(--vscode-editor-font-size);
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            line-height: 1.5;
+        }
+
+        .diff-content:focus {
+            outline: 2px solid var(--vscode-focusBorder);
+            outline-offset: -2px;
+        }
+
+        /* 合并编辑区域 */
+        .merge-container {
+            margin-top: 20px;
+            border-top: 2px solid var(--vscode-panel-border);
+            padding-top: 20px;
+        }
+
+        .merge-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .merge-header h2 {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .merge-editor {
+            width: 100%;
+            min-height: 300px;
+            font-family: var(--vscode-editor-font-family);
+            font-size: var(--vscode-editor-font-size);
+            padding: 10px;
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            background-color: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            resize: vertical;
+            white-space: pre;
+            overflow-x: auto;
+        }
+
+        .merge-editor:focus {
+            outline: 2px solid var(--vscode-focusBorder);
+            outline-offset: -2px;
+        }
+
+        /* 冲突标记高亮 */
+        .conflict-marker {
+            background-color: var(--vscode-notificationsWarningIcon-foreground);
+            color: var(--vscode-editor-background);
+            padding: 2px 4px;
+            border-radius: 2px;
+            font-weight: bold;
+        }
+
+        /* 加载状态 */
+        .loading {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .loading-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        /* 错误消息 */
+        .error-message {
+            background-color: var(--vscode-inputValidation-errorBackground);
+            border: 1px solid var(--vscode-inputValidation-errorBorder);
+            color: var(--vscode-errorForeground);
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        /* 行号 */
+        .line-number {
+            display: inline-block;
+            width: 40px;
+            text-align: right;
+            padding-right: 10px;
+            color: var(--vscode-descriptionForeground);
+            user-select: none;
+        }
+
+        .diff-line {
+            display: flex;
+        }
+
+        .diff-line-content {
+            flex: 1;
+        }
+
+        /* 同步滚动提示 */
+        .sync-scroll-hint {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background-color: var(--vscode-input-background);
+            border: 1px solid var(--vscode-panel-border);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>冲突对比: {{fileName}}</h1>
+        <div class="file-path">{{filePath}}</div>
+    </div>
+
+    <div class="actions">
+        <button class="button button-success" onclick="useMine()">使用本地版本</button>
+        <button class="button button-success" onclick="useTheirs()">使用服务器版本</button>
+        <button class="button button-success" onclick="useWorking()">使用工作副本版本</button>
+        <button class="button button-secondary" onclick="refresh()">刷新</button>
+    </div>
+
+    <!-- 加载状态 -->
+    <div id="loadingState" class="loading" style="display: none;">
+        <div class="loading-icon">⏳</div>
+        <div>正在加载冲突详情...</div>
+    </div>
+
+    <!-- 错误消息 -->
+    <div id="errorMessage" class="error-message" style="display: none;">
+        <strong>错误：</strong><span id="errorText"></span>
+    </div>
+
+    <!-- 三路对比 -->
+    <div id="diffState" class="diff-container" style="display: none;">
+        <div class="diff-panel">
+            <div class="diff-panel-header mine">本地版本 (mine)</div>
+            <div class="diff-content" id="mineContent" contenteditable="false"></div>
+        </div>
+        <div class="diff-panel">
+            <div class="diff-panel-header base">基础版本 (base)</div>
+            <div class="diff-content" id="baseContent" contenteditable="false"></div>
+        </div>
+        <div class="diff-panel">
+            <div class="diff-panel-header theirs">服务器版本 (theirs)</div>
+            <div class="diff-content" id="theirsContent" contenteditable="false"></div>
+        </div>
+    </div>
+
+    <!-- 合并编辑区域 -->
+    <div id="mergeState" class="merge-container" style="display: none;">
+        <div class="merge-header">
+            <h2>合并结果编辑</h2>
+            <button class="button button-success" onclick="saveMerged()">保存并标记已解决</button>
+        </div>
+        <textarea class="merge-editor" id="mergedContent" placeholder="在此编辑合并后的内容，或从上方选择版本后修改..."></textarea>
+        <div style="margin-top: 10px; font-size: 12px; color: var(--vscode-descriptionForeground);">
+            💡 提示：您可以手动编辑合并结果，或点击上方按钮快速选择使用某个版本
+        </div>
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        let conflictDetails = null;
+
+        // 初始化
+        window.addEventListener('DOMContentLoaded', () => {
+            // 设置初始内容
+            const mineContent = document.getElementById('mineContent');
+            const baseContent = document.getElementById('baseContent');
+            const theirsContent = document.getElementById('theirsContent');
+            const mergedContent = document.getElementById('mergedContent');
+
+            if (mineContent) {
+                mineContent.textContent = '{{mineContent}}';
+                formatContent(mineContent);
+            }
+            if (baseContent) {
+                baseContent.textContent = '{{baseContent}}';
+                formatContent(baseContent);
+            }
+            if (theirsContent) {
+                theirsContent.textContent = '{{theirsContent}}';
+                formatContent(theirsContent);
+            }
+            if (mergedContent) {
+                mergedContent.value = '{{workingContent}}' || '{{mineContent}}';
+            }
+
+            // 显示对比界面
+            showDiffState();
+
+            // 设置同步滚动
+            setupSyncScroll();
+        });
+
+        // 监听来自扩展的消息
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.command) {
+                case 'loadingStarted':
+                    showLoadingState();
+                    break;
+                
+                case 'loadingCompleted':
+                    conflictDetails = message.conflictDetails;
+                    updateContent(message.conflictDetails);
+                    showDiffState();
+                    break;
+                
+                case 'loadingError':
+                    showError(message.error);
+                    break;
+                
+                case 'resolveCompleted':
+                    vscode.postMessage({
+                        command: 'close'
+                    });
+                    break;
+                
+                case 'resolveError':
+                    showError(message.error);
+                    break;
+                
+                case 'saveCompleted':
+                    vscode.postMessage({
+                        command: 'close'
+                    });
+                    break;
+                
+                case 'saveError':
+                    showError(message.error);
+                    break;
+            }
+        });
+
+        // 格式化内容（添加行号和高亮冲突标记）
+        function formatContent(element) {
+            const text = element.textContent;
+            const lines = text.split('\n');
+            let html = '';
+            
+            lines.forEach((line, index) => {
+                const lineNumber = index + 1;
+                let lineContent = escapeHtml(line);
+                
+                // 高亮冲突标记
+                if (line.includes('<<<<<<<')) {
+                    lineContent = '<span class="conflict-marker">' + lineContent + '</span>';
+                } else if (line.includes('=======')) {
+                    lineContent = '<span class="conflict-marker">' + lineContent + '</span>';
+                } else if (line.includes('>>>>>>>')) {
+                    lineContent = '<span class="conflict-marker">' + lineContent + '</span>';
+                }
+                
+                html += `<div class="diff-line">
+                    <span class="line-number">${lineNumber}</span>
+                    <span class="diff-line-content">${lineContent}</span>
+                </div>`;
+            });
+            
+            element.innerHTML = html;
+        }
+
+        // 转义HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 显示加载状态
+        function showLoadingState() {
+            document.getElementById('loadingState').style.display = 'block';
+            document.getElementById('diffState').style.display = 'none';
+            document.getElementById('mergeState').style.display = 'none';
+            hideError();
+        }
+
+        // 显示对比状态
+        function showDiffState() {
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('diffState').style.display = 'grid';
+            document.getElementById('mergeState').style.display = 'block';
+            hideError();
+        }
+
+        // 更新内容
+        function updateContent(details) {
+            const mineContent = document.getElementById('mineContent');
+            const baseContent = document.getElementById('baseContent');
+            const theirsContent = document.getElementById('theirsContent');
+            const mergedContent = document.getElementById('mergedContent');
+
+            if (mineContent && details.mineContent) {
+                mineContent.textContent = details.mineContent;
+                formatContent(mineContent);
+            }
+            if (baseContent && details.baseContent) {
+                baseContent.textContent = details.baseContent;
+                formatContent(baseContent);
+            }
+            if (theirsContent && details.theirsContent) {
+                theirsContent.textContent = details.theirsContent;
+                formatContent(theirsContent);
+            }
+            if (mergedContent) {
+                mergedContent.value = details.workingContent || details.mineContent || '';
+            }
+        }
+
+        // 使用本地版本
+        function useMine() {
+            const mergedContent = document.getElementById('mergedContent');
+            if (mergedContent && conflictDetails && conflictDetails.mineContent) {
+                mergedContent.value = conflictDetails.mineContent;
+            }
+        }
+
+        // 使用服务器版本
+        function useTheirs() {
+            const mergedContent = document.getElementById('mergedContent');
+            if (mergedContent && conflictDetails && conflictDetails.theirsContent) {
+                mergedContent.value = conflictDetails.theirsContent;
+            }
+        }
+
+        // 使用工作副本版本
+        function useWorking() {
+            const mergedContent = document.getElementById('mergedContent');
+            if (mergedContent && conflictDetails && conflictDetails.workingContent) {
+                mergedContent.value = conflictDetails.workingContent;
+            }
+        }
+
+        // 保存合并内容
+        function saveMerged() {
+            const mergedContent = document.getElementById('mergedContent');
+            if (mergedContent) {
+                vscode.postMessage({
+                    command: 'saveMerged',
+                    content: mergedContent.value
+                });
+            }
+        }
+
+        // 刷新
+        function refresh() {
+            vscode.postMessage({
+                command: 'refresh'
+            });
+        }
+
+        // 设置同步滚动
+        function setupSyncScroll() {
+            const panels = ['mineContent', 'baseContent', 'theirsContent'];
+            const elements = panels.map(id => document.getElementById(id));
+            
+            elements.forEach((element, index) => {
+                if (!element) return;
+                
+                element.addEventListener('scroll', () => {
+                    const scrollTop = element.scrollTop;
+                    elements.forEach((otherElement, otherIndex) => {
+                        if (otherIndex !== index && otherElement) {
+                            otherElement.scrollTop = scrollTop;
+                        }
+                    });
+                });
+            });
+        }
+
+        // 显示错误
+        function showError(message) {
+            document.getElementById('errorMessage').style.display = 'block';
+            document.getElementById('errorText').textContent = message;
+        }
+
+        // 隐藏错误
+        function hideError() {
+            document.getElementById('errorMessage').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
+
