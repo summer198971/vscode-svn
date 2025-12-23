@@ -2007,6 +2007,25 @@ export class SvnService {
         escapedPath = `${filePath}@`;
       }
       
+      // 将策略转换为SVN命令的正确参数
+      // SVN的--accept参数值：mine-full(本地版本), theirs-full(服务器版本), working(工作副本)
+      let acceptValue: string;
+      switch (strategy) {
+        case 'mine':
+          acceptValue = 'mine-full';
+          break;
+        case 'theirs':
+          acceptValue = 'theirs-full';
+          break;
+        case 'working':
+          acceptValue = 'working';
+          break;
+        default:
+          acceptValue = 'working';
+      }
+      
+      this.outputChannel.appendLine(`SVN命令参数: --accept ${acceptValue}`);
+      
       // 执行 svn resolve 命令
       const cwd = path.dirname(filePath);
       const fileName = path.basename(escapedPath);
@@ -2022,7 +2041,7 @@ export class SvnService {
             if (relativePath.includes('@')) {
               finalPath = `${relativePath}@`;
             }
-            const result = await this.executeSvnCommand(`resolve --accept ${strategy} "${finalPath}"`, this.getCustomSvnRoot()!);
+            const result = await this.executeSvnCommand(`resolve --accept ${acceptValue} "${finalPath}"`, this.getCustomSvnRoot()!);
             this.outputChannel.appendLine(result);
             this.outputChannel.appendLine('========== SVN冲突解决完成 ==========');
             return;
@@ -2030,7 +2049,7 @@ export class SvnService {
         }
       }
       
-      const result = await this.executeSvnCommand(`resolve --accept ${strategy} "${fileName}"`, cwd);
+      const result = await this.executeSvnCommand(`resolve --accept ${acceptValue} "${fileName}"`, cwd);
       this.outputChannel.appendLine(result);
       this.outputChannel.appendLine('========== SVN冲突解决完成 ==========');
     } catch (error: any) {
