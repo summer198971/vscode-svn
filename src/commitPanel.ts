@@ -21,6 +21,8 @@ export class SvnCommitPanel {
   private hasChanges: boolean = false;
   private diffShown: boolean = false;
   private diffContent: string = '';
+  // 最近一次AI生成的提交日志，用于在收到前缀后应用，避免重复调用AI
+  private lastGeneratedMessage: string = '';
 
   private constructor(
     panel: vscode.WebviewPanel,
@@ -132,6 +134,7 @@ export class SvnCommitPanel {
       }
       const commitMessage = await this.aiService.generateCommitMessage(this.diffContent);
       if (commitMessage) {
+        this.lastGeneratedMessage = commitMessage;
         // 获取当前前缀输入框的值
         this.panel.webview.postMessage({
           command: 'getCurrentPrefix'
@@ -421,7 +424,10 @@ export class SvnCommitPanel {
       <script>
         (function() {
           const vscode = acquireVsCodeApi();
-          
+
+          // 是否允许空提交信息（来自扩展配置）
+          const allowEmptyCommitMessage = ${this.allowEmptyCommitMessage};
+
           // 获取元素
           const commitButton = document.getElementById('commit-button');
           const cancelButton = document.getElementById('cancel-button');
@@ -435,7 +441,7 @@ export class SvnCommitPanel {
           // 提交按钮点击事件
           commitButton.addEventListener('click', () => {
             const message = commitMessage.value.trim();
-            if (!message) {
+            if (!message && !allowEmptyCommitMessage) {
               alert('请输入提交日志');
               return;
             }
@@ -661,12 +667,19 @@ export class SvnCommitPanel {
   }
 
   /**
+   * 是否允许空提交信息（读取配置 vscode-svn.allowEmptyCommitMessage）
+   */
+  private get allowEmptyCommitMessage(): boolean {
+    return vscode.workspace.getConfiguration('vscode-svn').get<boolean>('allowEmptyCommitMessage', false);
+  }
+
+  /**
    * 提交文件
    * @param message 提交信息
    */
   private async commitFile(message: string) {
     try {
-      if (!message.trim()) {
+      if (!message.trim() && !this.allowEmptyCommitMessage) {
         vscode.window.showErrorMessage('请输入提交信息');
         return;
       }
@@ -772,17 +785,18 @@ export class SvnCommitPanel {
         case 'selectHistoryLog':
           await this.selectHistoryLog(message.logId);
           break;
-        case 'applyPrefixToMessage':
-          // 收到前缀后，应用到AI生成的消息
-          const aiMessage = await this.aiService.generateCommitMessage(this.diffContent);
-          if (aiMessage) {
-            const messageWithPrefix = await this.applyPrefix(message.prefix, aiMessage);
+        case 'applyPrefixToMessage': {
+          // 收到前缀后，应用到已生成的AI消息（不重复调用AI）
+          if (this.lastGeneratedMessage) {
+            const messageWithPrefix = await this.applyPrefix(message.prefix, this.lastGeneratedMessage);
+            this.lastGeneratedMessage = '';
             this.panel.webview.postMessage({
               command: 'updateCommitMessage',
               message: messageWithPrefix
             });
           }
           break;
+        }
         case 'savePrefix':
           // 保存前缀到历史记录
           this.logStorage.addPrefix(message.prefix);

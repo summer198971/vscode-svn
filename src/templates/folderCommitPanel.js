@@ -1,6 +1,9 @@
 (function() {
     const vscode = acquireVsCodeApi();
-    
+
+    // 是否允许空提交信息（来自扩展配置）
+    const allowEmptyCommitMessage = {{ALLOW_EMPTY_COMMIT_MESSAGE}};
+
     // 从状态中恢复或初始化
     const previousState = vscode.getState() || { 
         selectedFiles: [],
@@ -250,8 +253,8 @@
 
     function submitCommit() {
         const message = document.getElementById('commitMessage').value;
-        if (!message) {
-            vscode.postMessage({ 
+        if (!message && !allowEmptyCommitMessage) {
+            vscode.postMessage({
                 command: 'showError',
                 text: '请输入提交信息'
             });

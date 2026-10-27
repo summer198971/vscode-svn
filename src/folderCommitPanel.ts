@@ -593,7 +593,8 @@ export class SvnFolderCommitPanel {
                 FILTER_INFO: this._renderFilterInfo(),
                 FILE_LIST: this._renderFileList(this._fileStatuses),
                 PREFIX_OPTIONS: this._renderPrefixOptions(),
-                LATEST_PREFIX: this.logStorage.getLatestPrefix()
+                LATEST_PREFIX: this.logStorage.getLatestPrefix(),
+                ALLOW_EMPTY_COMMIT_MESSAGE: vscode.workspace.getConfiguration('vscode-svn').get<boolean>('allowEmptyCommitMessage', false) ? 'true' : 'false'
             };
 
             // 使用内联模板（CSS 和 JS 内嵌在 HTML 中）

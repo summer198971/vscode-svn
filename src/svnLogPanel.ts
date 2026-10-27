@@ -2928,43 +2928,57 @@ export class SvnLogPanel {
         try {
             const prevRevision = parseInt(revision) - 1;
             this._log(`获取文件差异: ${filePath}, 版本 ${prevRevision}:${revision}`);
-            
-            // 首先尝试获取SVN仓库URL
+
+            // 首先尝试获取SVN仓库URL和仓库根URL
             let repoUrl = '';
+            let repoRoot = '';
             const workingDir = path.dirname(this._targetPath);
-            
+
             try {
                 const infoCommand = `info --xml "${this._targetPath}"`;
                 const infoXml = await this.svnService.executeSvnCommand(infoCommand, workingDir, false);
-                
+
                 const urlMatch = /<url>(.*?)<\/url>/s.exec(infoXml);
+                const rootMatch = /<root>(.*?)<\/root>/s.exec(infoXml);
                 if (urlMatch && urlMatch[1]) {
-                    const fullUrl = urlMatch[1];
-                    if (fullUrl.includes('/trunk/')) {
-                        repoUrl = fullUrl.substring(0, fullUrl.indexOf('/trunk/'));
-                    } else if (fullUrl.includes('/branches/')) {
-                        repoUrl = fullUrl.substring(0, fullUrl.indexOf('/branches/'));
-                    } else if (fullUrl.includes('/tags/')) {
-                        repoUrl = fullUrl.substring(0, fullUrl.indexOf('/tags/'));
-                    } else {
-                        repoUrl = fullUrl;
-                    }
-                    this._log(`获取到仓库URL: ${repoUrl}`);
+                    repoUrl = urlMatch[1];
                 }
+                if (rootMatch && rootMatch[1]) {
+                    repoRoot = rootMatch[1];
+                }
+                this._log(`获取到仓库URL: ${repoUrl}, 仓库根URL: ${repoRoot}`);
             } catch (error: any) {
                 this._log(`获取仓库URL失败: ${error.message}`);
             }
-            
+
+            // 智能拼接文件URL，避免路径重复（与日志视图的差异获取逻辑保持一致）
+            let fileUrl = '';
+            if (repoUrl && filePath) {
+                if (repoRoot && filePath.startsWith('/')) {
+                    const repoUrlPath = repoUrl.replace(repoRoot, '');
+                    if (repoUrlPath && filePath.startsWith(repoUrlPath)) {
+                        // 日志中的路径已包含工作副本相对仓库根的部分，直接用仓库根URL拼接
+                        fileUrl = `${repoRoot}${filePath}`;
+                    } else {
+                        fileUrl = `${repoUrl}${filePath}`;
+                    }
+                } else {
+                    // 相对路径或未获取到仓库根URL，使用仓库URL拼接
+                    fileUrl = `${repoUrl}/${filePath.replace(/^\//, '')}`;
+                }
+                this._log(`构建文件URL: ${fileUrl}`);
+            }
+
             // 尝试使用不同的命令格式获取差异
             const commands = [
+                // 使用 -c 参数获取该修订版本引入的精确变更（最可靠）
+                fileUrl ? `diff -c ${revision} "${fileUrl}"` : '',
                 // 使用完整URL路径的diff命令
-                repoUrl ? `diff -r ${prevRevision}:${revision} "${repoUrl}${filePath}"` : '',
-                // 使用相对路径的diff命令
-                `diff -r ${prevRevision}:${revision} "${filePath}"`,
+                fileUrl ? `diff -r ${prevRevision}:${revision} "${fileUrl}"` : '',
                 // 使用分离的版本参数
-                `diff -r ${prevRevision} -r ${revision} "${filePath}"`,
-                // 尝试使用URL直接比较（如果有仓库URL）
-                repoUrl ? `diff "${repoUrl}${filePath}@${prevRevision}" "${repoUrl}${filePath}@${revision}"` : ''
+                fileUrl ? `diff -r ${prevRevision} -r ${revision} "${fileUrl}"` : '',
+                // 使用相对路径的diff命令
+                `diff -r ${prevRevision}:${revision} "${filePath}"`
             ].filter(cmd => cmd);
             
             this._log(`准备尝试 ${commands.length} 个不同的diff命令`);
@@ -2996,18 +3010,18 @@ export class SvnLogPanel {
             
             // 如果所有diff命令都失败，尝试获取文件内容进行手动比较
             this._log('所有diff命令都失败，尝试获取文件内容进行手动比较');
-            
+
             try {
-                if (repoUrl) {
+                if (fileUrl) {
                     this._log('尝试获取两个版本的文件内容进行比较');
-                    
+
                     // 获取前一个版本的文件内容
-                    const prevContentCmd = `cat "${repoUrl}${filePath}@${prevRevision}"`;
+                    const prevContentCmd = `cat "${fileUrl}@${prevRevision}"`;
                     this._log(`获取前一版本内容: ${prevContentCmd}`);
                     const prevContent = await this.svnService.executeSvnCommand(prevContentCmd, workingDir, false);
-                    
+
                     // 获取当前版本的文件内容
-                    const currentContentCmd = `cat "${repoUrl}${filePath}@${revision}"`;
+                    const currentContentCmd = `cat "${fileUrl}@${revision}"`;
                     this._log(`获取当前版本内容: ${currentContentCmd}`);
                     const currentContent = await this.svnService.executeSvnCommand(currentContentCmd, workingDir, false);
                     

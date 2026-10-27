@@ -253,6 +253,25 @@ export class SvnService {
   }
 
   /**
+   * 执行带提交/备注信息的SVN命令（commit、lock等）
+   * 信息通过临时文件（--file）传递，避免多行信息被 shell 按换行截断，
+   * 也避免信息中的引号、$ 等特殊字符破坏命令
+   * @param command 不含信息参数的SVN命令（如 commit "foo.ts"）
+   * @param cwd 工作目录
+   * @param message 提交信息或备注
+   * @returns 命令执行结果
+   */
+  private async executeMessageCommand(command: string, cwd: string, message: string): Promise<string> {
+    const messageFile = path.join(os.tmpdir(), `vscode-svn-msg-${Date.now()}-${Math.random().toString(36).substring(2)}.txt`);
+    await fs.promises.writeFile(messageFile, message, 'utf8');
+    try {
+      return await this.executeSvnCommand(`${command} --file "${messageFile}" --encoding UTF-8`, cwd);
+    } finally {
+      fs.unlink(messageFile, () => {});
+    }
+  }
+
+  /**
    * 执行SVN命令（支持认证重试）
    * @param command SVN命令
    * @param path 工作目录
@@ -884,12 +903,12 @@ export class SvnService {
             }
             
             if (isDirectory) {
-              const result = await this.executeSvnCommand(`commit "${escapedPath}" -m "${message}"`, this.getCustomSvnRoot()!);
+              const result = await this.executeMessageCommand(`commit "${escapedPath}"`, this.getCustomSvnRoot()!, message);
               this.outputChannel.appendLine(result);
               this.outputChannel.appendLine('========== SVN提交操作完成 ==========');
               return;
             } else {
-              const result = await this.executeSvnCommand(`commit "${escapedPath}" -m "${message}"`, this.getCustomSvnRoot()!);
+              const result = await this.executeMessageCommand(`commit "${escapedPath}"`, this.getCustomSvnRoot()!, message);
               this.outputChannel.appendLine(result);
               this.outputChannel.appendLine('========== SVN提交操作完成 ==========');
               return;
@@ -900,7 +919,7 @@ export class SvnService {
       
       this.outputChannel.appendLine('正在提交文件...');
       if (isDirectory) {
-        const result = await this.executeSvnCommand(`commit -m "${message}"`, fsPath);
+        const result = await this.executeMessageCommand('commit', fsPath, message);
         this.outputChannel.appendLine(result);
       } else {
         const cwd = path.dirname(fsPath);
@@ -913,7 +932,7 @@ export class SvnService {
         
         this.outputChannel.appendLine(`工作目录: ${cwd}`);
         this.outputChannel.appendLine(`文件名: ${fileName}`);
-        const result = await this.executeSvnCommand(`commit "${fileName}" -m "${message}"`, cwd);
+        const result = await this.executeMessageCommand(`commit "${fileName}"`, cwd, message);
         this.outputChannel.appendLine(result);
       }
       
@@ -1241,7 +1260,7 @@ export class SvnService {
       
       // 执行提交命令
       this.outputChannel.appendLine('正在提交文件...');
-      const result = await this.executeSvnCommand(`commit ${fileArgs} -m "${message}"`, workingDir);
+      const result = await this.executeMessageCommand(`commit ${fileArgs}`, workingDir, message);
       this.outputChannel.appendLine(result);
       
       this.outputChannel.appendLine('========== SVN批量提交操作完成 ==========');
@@ -2144,13 +2163,10 @@ export class SvnService {
       }
 
       // 组装命令
-      const messageArg = message && message.trim().length > 0
-        ? ` -m "${message.replace(/"/g, '\\"')}"`
-        : '';
       const forceArg = force ? ' --force' : '';
-      const command = `lock "${fileName}"${messageArg}${forceArg}`;
-
-      const result = await this.executeSvnCommand(command, path.dirname(filePath));
+      const result = message && message.trim().length > 0
+        ? await this.executeMessageCommand(`lock "${fileName}"${forceArg}`, path.dirname(filePath), message)
+        : await this.executeSvnCommand(`lock "${fileName}"${forceArg}`, path.dirname(filePath));
       this.outputChannel.appendLine(result);
       this.outputChannel.appendLine('========== SVN锁定操作完成 ==========');
     } catch (error: any) {
