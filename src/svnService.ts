@@ -387,7 +387,8 @@ export class SvnService {
     }
     
     // 对于diff命令，添加特殊处理以支持各种编码
-    if (command.includes('diff')) {
+    // 只匹配diff子命令开头，避免文件路径中含"diff"字样的commit等命令被误加参数
+    if (command.trim().split(/\s+/)[0] === 'diff') {
       if (!command.includes('--force')) {
         command = `${command} --force`;
       }
