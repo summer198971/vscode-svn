@@ -42,6 +42,12 @@
         {{FILTER_INFO}}
     </div>
 
+    <div class="batch-actions">
+        <span id="selectedCount" class="selected-count">已选 0 项</span>
+        <button id="revertSelectedButton" class="batch-button revert" title="恢复选中文件的本地修改（丢弃未提交的修改，不可撤销）" disabled>恢复选中</button>
+        <button id="deleteSelectedButton" class="batch-button delete" title="删除选中的文件（版本控制中的文件计划删除，未版本控制的文件移入回收站）" disabled>删除选中</button>
+    </div>
+
     <div class="file-list-container">
         <div class="file-list">
             <div class="file-list-header">

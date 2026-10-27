@@ -1047,6 +1047,72 @@ export class SvnService {
   }
 
   /**
+   * 批量恢复文件到版本库状态（丢弃本地修改）
+   * @param filePaths 文件绝对路径列表
+   */
+  public async revertFiles(filePaths: string[]): Promise<void> {
+    if (filePaths.length === 0) {
+      return;
+    }
+    // 使用公共方法显示输出面板
+    this.showOutputChannel('SVN批量恢复操作');
+    this.outputChannel.appendLine(`批量恢复 ${filePaths.length} 个文件:`);
+    filePaths.forEach((filePath, index) => {
+      this.outputChannel.appendLine(`  ${index + 1}. ${filePath}`);
+    });
+
+    try {
+      // 构建路径参数，文件名包含@时在末尾追加@转义（SVN中@用于指定版本号）
+      const pathArgs = filePaths.map(filePath => {
+        const escaped = path.basename(filePath).includes('@') ? `${filePath}@` : filePath;
+        return `"${escaped}"`;
+      }).join(' ');
+
+      // 使用 -- 分隔符防止以 - 开头的路径被当作选项
+      const result = await this.executeSvnCommand(`revert -- ${pathArgs}`, path.dirname(filePaths[0]));
+      this.outputChannel.appendLine(result);
+      this.outputChannel.appendLine('========== SVN批量恢复操作完成 ==========');
+    } catch (error: any) {
+      this.outputChannel.appendLine(`错误: ${error.message}`);
+      this.outputChannel.appendLine('========== SVN批量恢复操作失败 ==========');
+      throw new Error(`批量恢复文件失败: ${error.message}`);
+    }
+  }
+
+  /**
+   * 批量删除版本控制中的文件（svn delete --force，会同时删除本地文件）
+   * @param filePaths 文件绝对路径列表
+   */
+  public async removeFiles(filePaths: string[]): Promise<void> {
+    if (filePaths.length === 0) {
+      return;
+    }
+    // 使用公共方法显示输出面板
+    this.showOutputChannel('SVN批量删除操作');
+    this.outputChannel.appendLine(`批量删除 ${filePaths.length} 个文件:`);
+    filePaths.forEach((filePath, index) => {
+      this.outputChannel.appendLine(`  ${index + 1}. ${filePath}`);
+    });
+
+    try {
+      // 构建路径参数，文件名包含@时在末尾追加@转义（SVN中@用于指定版本号）
+      const pathArgs = filePaths.map(filePath => {
+        const escaped = path.basename(filePath).includes('@') ? `${filePath}@` : filePath;
+        return `"${escaped}"`;
+      }).join(' ');
+
+      // --force 允许删除有本地修改的文件；-- 防止以 - 开头的路径被当作选项
+      const result = await this.executeSvnCommand(`delete --force -- ${pathArgs}`, path.dirname(filePaths[0]));
+      this.outputChannel.appendLine(result);
+      this.outputChannel.appendLine('========== SVN批量删除操作完成 ==========');
+    } catch (error: any) {
+      this.outputChannel.appendLine(`错误: ${error.message}`);
+      this.outputChannel.appendLine('========== SVN批量删除操作失败 ==========');
+      throw new Error(`批量删除文件失败: ${error.message}`);
+    }
+  }
+
+  /**
    * 恢复文件夹到版本库状态（递归恢复）
    * @param folderPath 文件夹路径
    */

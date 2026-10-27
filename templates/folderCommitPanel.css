@@ -122,6 +122,56 @@ body {
     opacity: 1;
 }
 
+.delete-button {
+    background-color: var(--vscode-errorForeground) !important;
+    opacity: 0.8;
+}
+
+.delete-button:hover {
+    opacity: 1;
+}
+
+/* 批量操作栏（恢复选中 / 删除选中） */
+.batch-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    flex-wrap: wrap;
+}
+
+.selected-count {
+    color: var(--vscode-descriptionForeground);
+    font-size: 12px;
+    min-width: 64px;
+}
+
+.batch-button {
+    padding: 3px 10px;
+    font-size: 12px;
+}
+
+.batch-button.revert {
+    background-color: var(--vscode-button-secondaryBackground, #3a3d41);
+    color: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
+}
+
+.batch-button.delete {
+    background-color: var(--vscode-errorForeground) !important;
+    color: var(--vscode-button-foreground);
+    opacity: 0.85;
+}
+
+.batch-button.delete:hover {
+    opacity: 1;
+}
+
+.batch-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
 .status-modified { color: #FFCC00; }
 .status-added { color: #73C991; }
 .status-deleted { color: #F14C4C; }

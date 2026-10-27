@@ -59,6 +59,7 @@
             const diffButton = item.querySelector('.diff-button');
             const sideBySideButton = item.querySelector('.side-by-side-button');
             const revertButton = item.querySelector('.revert-button');
+            const deleteButton = item.querySelector('.delete-button');
             const filePath = item.getAttribute('data-path');
 
             if (checkbox) {
@@ -69,6 +70,7 @@
                         selectedFiles.delete(filePath);
                     }
                     updateSelectAllCheckbox();
+                    updateSelectedCount();
                     saveState();  // 保存状态
                 });
             }
@@ -94,12 +96,19 @@
                 });
             }
 
+            if (deleteButton) {
+                deleteButton.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deleteFile(filePath);
+                });
+            }
+
             // 双击文件项快速打开差异对比（issue #11）
             // 排除 checkbox / 操作按钮 / 链接等交互元素，避免误触发
             item.addEventListener('dblclick', (e) => {
                 const target = e.target;
                 if (target && target.closest && target.closest(
-                    '.file-checkbox, .diff-button, .side-by-side-button, .revert-button, button, a, input'
+                    '.file-checkbox, .diff-button, .side-by-side-button, .revert-button, .delete-button, button, a, input'
                 )) {
                     return;
                 }
@@ -179,6 +188,16 @@
         document.getElementById('prefixSelect').addEventListener('change', updateCommitMessage);
         document.getElementById('applyPrefixButton').addEventListener('click', applyPrefix);
 
+        // 批量操作按钮（恢复选中 / 删除选中）
+        const revertSelectedButton = document.getElementById('revertSelectedButton');
+        const deleteSelectedButton = document.getElementById('deleteSelectedButton');
+        if (revertSelectedButton) {
+            revertSelectedButton.addEventListener('click', revertSelected);
+        }
+        if (deleteSelectedButton) {
+            deleteSelectedButton.addEventListener('click', deleteSelected);
+        }
+
         // 提交按钮
         document.getElementById('submitButton').addEventListener('click', submitCommit);
         document.getElementById('generateAIButton').addEventListener('click', generateAILog);
@@ -226,6 +245,7 @@
             }
         });
         updateSelectAllCheckbox();
+        updateSelectedCount();
     }
 
     function updateSelectAllCheckbox() {
@@ -308,6 +328,44 @@
 
     function revertFile(filePath) {
         vscode.postMessage({ command: 'revertFile', file: filePath });
+    }
+
+    function deleteFile(filePath) {
+        vscode.postMessage({ command: 'deleteFile', file: filePath });
+    }
+
+    function revertSelected() {
+        const files = Array.from(selectedFiles);
+        if (files.length === 0) {
+            return;
+        }
+        vscode.postMessage({ command: 'revertFiles', files: files });
+    }
+
+    function deleteSelected() {
+        const files = Array.from(selectedFiles);
+        if (files.length === 0) {
+            return;
+        }
+        vscode.postMessage({ command: 'deleteFiles', files: files });
+    }
+
+    // 更新已选数量提示与批量按钮可用状态
+    function updateSelectedCount() {
+        const count = selectedFiles.size;
+        const countLabel = document.getElementById('selectedCount');
+        const revertSelectedButton = document.getElementById('revertSelectedButton');
+        const deleteSelectedButton = document.getElementById('deleteSelectedButton');
+
+        if (countLabel) {
+            countLabel.textContent = count > 0 ? `已选 ${count} 项` : '已选 0 项';
+        }
+        if (revertSelectedButton) {
+            revertSelectedButton.disabled = count === 0;
+        }
+        if (deleteSelectedButton) {
+            deleteSelectedButton.disabled = count === 0;
+        }
     }
 
     function updateExtensionFilter() {
@@ -412,11 +470,23 @@
 
     // 页面加载完成后初始化
     document.addEventListener('DOMContentLoaded', () => {
+        // 清理已不在列表中的选中项（恢复/删除等操作后面板重建，路径可能已失效）
+        const existingPaths = new Set(
+            Array.from(document.querySelectorAll('.file-item')).map(item => item.getAttribute('data-path'))
+        );
+        Array.from(selectedFiles).forEach(path => {
+            if (!existingPaths.has(path)) {
+                selectedFiles.delete(path);
+            }
+        });
+        saveState();
+
         initializeEventListeners();
         initializeFileItemEvents();
         initializeExtensionFilter();
         updateExtensionFilter();
         updateFileList();
         updateCheckboxes();
+        updateSelectedCount();
     });
 })(); 

@@ -559,6 +559,15 @@ export class SvnFolderCommitPanel {
                     case 'revertFile':
                         await this._revertFile(message.file);
                         return;
+                    case 'revertFiles':
+                        await this._revertFiles(message.files || []);
+                        return;
+                    case 'deleteFile':
+                        await this._deleteFile(message.file);
+                        return;
+                    case 'deleteFiles':
+                        await this._deleteFiles(message.files || []);
+                        return;
                 }
             },
             null,
@@ -673,6 +682,8 @@ export class SvnFolderCommitPanel {
 
             // 确定是否显示恢复按钮（只在文件是已修改、已删除或丢失状态时显示）
             const showRevertButton = file.type === 'modified' || file.type === 'deleted' || file.type === 'missing';
+            // 确定是否显示删除按钮（已计划删除的文件无需再删除）
+            const showDeleteButton = file.type !== 'deleted';
 
             return `
                 <div class="file-item status-${statusClass}" 
@@ -691,6 +702,9 @@ export class SvnFolderCommitPanel {
                         ` : ''}
                         ${showRevertButton ? `
                             <button class="revert-button" title="恢复文件修改">恢复</button>
+                        ` : ''}
+                        ${showDeleteButton ? `
+                            <button class="delete-button" title="${file.type === 'unversioned' ? '删除本地文件' : '从版本控制中删除文件'}">删除</button>
                         ` : ''}
                     </span>
                 </div>
@@ -856,21 +870,103 @@ export class SvnFolderCommitPanel {
     }
 
     private async _revertFile(filePath: string): Promise<void> {
+        await this._revertFiles([filePath]);
+    }
+
+    /**
+     * 批量恢复文件（丢弃本地修改）
+     */
+    private async _revertFiles(filePaths: string[]): Promise<void> {
         try {
+            if (filePaths.length === 0) {
+                return;
+            }
+            const detail = filePaths.length <= 3
+                ? filePaths.map(f => path.basename(f)).join('、')
+                : `${path.basename(filePaths[0])} 等 ${filePaths.length} 个文件`;
             const result = await vscode.window.showWarningMessage(
-                '确定要恢复此文件的修改吗？此操作不可撤销。',
-                '确定',
+                `确定要恢复「${detail}」的本地修改吗？此操作不可撤销。`,
+                { modal: true },
+                '确定恢复',
                 '取消'
             );
 
-            if (result === '确定') {
-                await this.svnService.revertFile(filePath);
-                vscode.window.showInformationMessage('文件已成功恢复');
+            if (result === '确定恢复') {
+                await this.svnService.revertFiles(filePaths);
+                vscode.window.showInformationMessage(`已成功恢复 ${filePaths.length} 个文件`);
                 // 刷新文件状态列表
                 await this._update();
             }
         } catch (error: any) {
             vscode.window.showErrorMessage(`恢复文件失败: ${error.message}`);
+        }
+    }
+
+    /**
+     * 删除单个文件
+     */
+    private async _deleteFile(filePath: string): Promise<void> {
+        await this._deleteFiles([filePath]);
+    }
+
+    /**
+     * 批量删除文件
+     * 版本控制中的文件执行 svn delete --force（同时删除本地文件）；
+     * 未版本控制的文件直接移到系统回收站
+     */
+    private async _deleteFiles(filePaths: string[]): Promise<void> {
+        try {
+            if (filePaths.length === 0) {
+                return;
+            }
+
+            // 分类：未版本控制的文件走本地删除，其余走 svn delete
+            const unversionedFiles: string[] = [];
+            const versionedFiles: string[] = [];
+            filePaths.forEach(filePath => {
+                const fileStatus = this._fileStatuses.find(f => f.path === filePath);
+                if (fileStatus?.type === 'unversioned') {
+                    unversionedFiles.push(filePath);
+                } else {
+                    versionedFiles.push(filePath);
+                }
+            });
+
+            const detail = filePaths.length <= 3
+                ? filePaths.map(f => path.basename(f)).join('、')
+                : `${path.basename(filePaths[0])} 等 ${filePaths.length} 个文件`;
+            const tips: string[] = [];
+            if (versionedFiles.length > 0) {
+                tips.push(`${versionedFiles.length} 个文件将从版本控制中删除（计划删除，提交后生效）`);
+            }
+            if (unversionedFiles.length > 0) {
+                tips.push(`${unversionedFiles.length} 个未版本控制的文件将移到系统回收站`);
+            }
+            const result = await vscode.window.showWarningMessage(
+                `确定要删除「${detail}」吗？\n${tips.join('；')}。`,
+                { modal: true, detail: '删除操作会连同本地文件一起删除（未版本控制文件移入回收站）。' },
+                '确定删除',
+                '取消'
+            );
+
+            if (result !== '确定删除') {
+                return;
+            }
+
+            if (versionedFiles.length > 0) {
+                await this.svnService.removeFiles(versionedFiles);
+            }
+            if (unversionedFiles.length > 0) {
+                for (const filePath of unversionedFiles) {
+                    await vscode.workspace.fs.delete(vscode.Uri.file(filePath), { useTrash: true });
+                }
+            }
+
+            vscode.window.showInformationMessage(`已成功删除 ${filePaths.length} 个文件`);
+            // 刷新文件状态列表
+            await this._update();
+        } catch (error: any) {
+            vscode.window.showErrorMessage(`删除文件失败: ${error.message}`);
         }
     }
 
