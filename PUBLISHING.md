@@ -89,6 +89,22 @@
 
 ## 常见问题
 
+### vsce 打包报 "Extension entrypoint(s) missing"
+
+如果项目所在目录路径中包含**形似 UUID 的段落**（如 `draft-0a8c1bd7-ff24-4f31-8d8e-e89dfa72dd86`），新版 npm（内置 `@npmcli/redact` 脱敏模块）会把 `npm list --parseable` 输出中的这段路径脱敏为 `***`。vsce 依赖该输出定位依赖目录，拿到不存在的路径后会收集不到任何文件，报错：
+
+```
+ERROR  Extension entrypoint(s) missing. Make sure these files exist
+and aren't ignored by '.vscodeignore': extension/out/extension.js
+```
+
+**解决办法**：把仓库复制到不含 UUID 的普通路径下再打包，例如：
+
+```bash
+cp -R /path/to/vscode-svn /tmp/vsce-build
+cd /tmp/vsce-build && vsce package
+```
+
 ### 发布失败
 
 如果发布失败，可能的原因包括：
