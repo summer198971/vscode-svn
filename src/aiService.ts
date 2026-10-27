@@ -323,6 +323,12 @@ export class AiService {
    * @returns 生成的提交日志
    */
   public async generateCommitMessage(diffContent: string): Promise<string> {
+    // 根据配置选择AI来源：editor=编辑器内置AI（Language Model API），custom=自定义API（默认）
+    const provider = vscode.workspace.getConfiguration('vscode-svn').get<string>('aiProvider', 'custom');
+    if (provider === 'editor') {
+      return this.generateCommitMessageFromEditor(diffContent);
+    }
+
     try {
       // 检查配置
       let aiConfig = this.checkAiConfig();
@@ -396,6 +402,93 @@ export class AiService {
         }
       }
       
+      return '';
+    }
+  }
+
+  /**
+   * 使用编辑器内置AI生成提交日志（通过 Language Model API）
+   * 适用于 Qoder、Trae、VS Code Copilot 等内置AI模型的编辑器，无需配置API地址和密钥
+   * @param diffContent SVN差异内容
+   * @returns 生成的提交日志
+   */
+  private async generateCommitMessageFromEditor(diffContent: string): Promise<string> {
+    try {
+      // 运行时特性检测：老版本编辑器可能没有 vscode.lm API
+      const lm = (vscode as any).lm;
+      if (!lm || typeof lm.selectChatModels !== 'function') {
+        throw new Error('当前编辑器不支持内置AI（缺少 Language Model API）。请将配置 vscode-svn.aiProvider 改回 custom 并配置API信息');
+      }
+
+      const models = await lm.selectChatModels({});
+      if (!models || models.length === 0) {
+        throw new Error('当前编辑器没有可用的内置AI模型。请确认已在编辑器中登录AI服务；或改回 custom 方式并配置API信息');
+      }
+
+      // 多个模型时让用户选择
+      let model = models[0];
+      if (models.length > 1) {
+        const items: (vscode.QuickPickItem & { model: any })[] = models.map((m: any, index: number) => ({
+          label: m.name || m.family || `模型${index + 1}`,
+          description: `${m.vendor || ''} ${m.family || ''} ${m.id || ''}`.trim(),
+          model: m
+        }));
+        const picked = await vscode.window.showQuickPick(items, {
+          placeHolder: '选择用于生成提交日志的编辑器内置AI模型'
+        });
+        if (!picked) {
+          return '';
+        }
+        model = picked.model;
+      }
+
+      this.outputChannel.appendLine(`[generateCommitMessageFromEditor] 使用编辑器内置模型: ${model.family || model.name || 'unknown'}`);
+
+      return await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: '正在使用编辑器内置AI生成SVN提交日志...',
+        cancellable: true
+      }, async (progress, token) => {
+        progress.report({ increment: 20 });
+
+        const prompt = this.preparePrompt(diffContent);
+        const messages = [vscode.LanguageModelChatMessage.User(prompt)];
+        const response = await model.sendRequest(messages, {}, token);
+
+        // 聚合流式返回的文本
+        let result = '';
+        let lastReport = 20;
+        for await (const chunk of response.text) {
+          result += chunk;
+          if (token.isCancellationRequested) {
+            break;
+          }
+          // 进度按内容长度缓慢推进，避免一直停在20%
+          if (result.length > lastReport * 40) {
+            lastReport = Math.min(90, lastReport + 10);
+            progress.report({ increment: 10 });
+          }
+        }
+
+        const trimmed = result.trim();
+        this.outputChannel.appendLine(`[generateCommitMessageFromEditor] 生成完成，内容长度: ${trimmed.length}`);
+        return trimmed;
+      });
+    } catch (error: any) {
+      this.outputChannel.appendLine(`[generateCommitMessageFromEditor] 失败: ${error.message}`);
+      vscode.window.showErrorMessage(
+        `使用编辑器内置AI生成提交日志失败: ${error.message}`,
+        '查看说明'
+      ).then(choice => {
+        if (choice === '查看说明') {
+          vscode.window.showInformationMessage(
+            '编辑器内置AI说明\n\n'
+            + '• 该方式通过编辑器的 Language Model API 调用编辑器自带的AI模型（如 Qoder 的通义千问），无需在插件中配置API地址和密钥\n'
+            + '• 需要编辑器版本支持且已登录编辑器内置的AI服务\n'
+            + '• 如不可用，可将设置 vscode-svn.aiProvider 改回 custom，使用自定义API配置'
+          );
+        }
+      });
       return '';
     }
   }
