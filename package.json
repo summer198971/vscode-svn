@@ -2,7 +2,7 @@
   "name": "vscode-svn-ai",
   "displayName": "VSCode SVN - AI智能版本控制",
   "description": "🚀 全平台SVN智能插件：基于原生命令行工具，支持Windows/macOS/Linux，内置AI提交日志生成，可视化差异对比，100%开源透明。无需TortoiseSVN，轻量级高性能！",
-  "version": "4.13.0",
+  "version": "4.14.0",
   "publisher": "pengfeiSummer",
   "icon": "resources/icon.png",
   "engines": {
@@ -294,6 +294,19 @@
           "type": "string",
           "default": null,
           "description": "自定义SVN工作副本根目录路径"
+        },
+        "vscode-svn.aiProvider": {
+          "type": "string",
+          "enum": [
+            "custom",
+            "editor"
+          ],
+          "enumDescriptions": [
+            "自定义API：使用下方 aiApiUrl / aiModelId / aiApiKey 配置的AI服务（默认）",
+            "编辑器内置AI：通过编辑器的 Language Model API 调用编辑器自带的AI模型（适用于Qoder、Trae、VS Code Copilot等，无需配置API）"
+          ],
+          "default": "custom",
+          "description": "AI生成提交日志的服务来源"
         },
         "vscode-svn.aiApiUrl": {
           "type": "string",
