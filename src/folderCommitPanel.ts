@@ -4,6 +4,7 @@ import { SvnDiffProvider } from './diffProvider';
 import { CommitLogStorage } from './commitLogStorage';
 import { SvnFilterService } from './filterService';
 import { TemplateManager } from './templateManager';
+import { parseSvnStatusOutput } from './svnStatusParser';
 import * as path from 'path';
 import { AiService } from './aiService';
 
@@ -12,6 +13,8 @@ interface FileStatus {
     status: string;
     type: 'modified' | 'added' | 'deleted' | 'unversioned' | 'conflict' | 'missing';
     displayName: string;
+    /** 所属 changelist 名称（未分组则为 undefined） */
+    changelist?: string;
 }
 
 export class SvnFolderCommitPanel {
@@ -118,66 +121,17 @@ export class SvnFolderCommitPanel {
             this.outputChannel.appendLine(`[_updateFileStatuses] SVN status 原始输出长度: ${statusResult.length} 字符`);
             this.outputChannel.appendLine(`[_updateFileStatuses] SVN status 原始输出:\n${statusResult}`);
 
-            // 首先处理所有文件状态
-            const allFileStatuses = statusResult
-                .split('\n')
-                .map(line => line.trim())
-                .filter(line => {
-                    if (!line) return false;
-                    // 过滤树冲突的详细信息行
-                    if (line.startsWith('>')) return false;
-                    // 过滤 svn:externals 提示行（issue #19）
-                    // SVN 在进入外部链接目录时会输出：Performing status on external item at '...'
-                    if (line.startsWith('Performing status on external item')) return false;
-                    // 过滤外部链接占位行（状态字符为 'X'）以及第7列为 'X' 的外部链接定义行
-                    // SVN status 第7列（索引6）若为 X 表示该项是外部链接定义
-                    if (line[0] === 'X') return false;
-                    if (line.length > 6 && line[6] === 'X') return false;
-                    return true;
-                })
-                .map(line => {
-                    // SVN status 输出格式：
-                    // 第一列：文件状态 (M:修改, A:新增, D:删除, ?:未版本控制, C:冲突, !:丢失等)
-                    // 后面跟着空格，然后是文件路径
-                    const status = line[0];
-                    // 找到第一个非空格字符后的文件路径
-                    const match = line.match(/^.\s+(.+)$/);
-                    const filePath = match ? match[1].trim() : line.substring(1).trim();
-                    console.log('Processing line:', { status, filePath });
-                    this.outputChannel.appendLine(`[_updateFileStatuses] 处理行: "${line}" -> 状态: "${status}", 文件路径: "${filePath}"`);
-
-                    let type: 'modified' | 'added' | 'deleted' | 'unversioned' | 'conflict' | 'missing';
-                    switch (status) {
-                        case 'M':
-                            type = 'modified';
-                            break;
-                        case 'A':
-                            type = 'added';
-                            break;
-                        case 'D':
-                            type = 'deleted';
-                            break;
-                        case 'C':
-                            type = 'conflict';
-                            break;
-                        case '!':
-                            type = 'missing';
-                            break;
-                        case '?':
-                        default:
-                            type = 'unversioned';
-                    }
-
-                    // 使用 path.resolve 获取绝对路径
-                    const absolutePath = path.resolve(this.folderPath, filePath);
-                    
-                    return {
-                        path: absolutePath,
-                        status: this._getStatusText(status),
-                        type,
-                        displayName: filePath // 使用相对路径作为显示名称
-                    };
-                });
+            // 解析状态输出（含 changelist 分组，issue #21）
+            const allFileStatuses = parseSvnStatusOutput(statusResult, this.folderPath).map(file => {
+                this.outputChannel.appendLine(`[_updateFileStatuses] 解析: "${file.displayName}" 状态: "${file.status}" 类型: ${file.type}${file.changelist ? ` changelist: ${file.changelist}` : ''}`);
+                return {
+                    path: file.path,
+                    status: this._getStatusText(file.status),
+                    type: file.type,
+                    displayName: file.displayName,
+                    changelist: file.changelist
+                };
+            });
 
             // 应用过滤器排除不需要的文件
             this.outputChannel.appendLine(`[_updateFileStatuses] 开始应用过滤器，原始文件数量: ${allFileStatuses.length}`);
@@ -238,6 +192,62 @@ export class SvnFolderCommitPanel {
             console.error('Error updating file statuses:', error);
             vscode.window.showErrorMessage(`更新文件状态失败: ${error}`);
             this._fileStatuses = [];
+        }
+    }
+
+    /**
+     * 将选中的文件加入 changelist（issue #21）
+     * 未版本控制的文件不能加入 changelist，会被自动过滤并提示
+     */
+    private async _setChangelist(filePaths: string[], name: string): Promise<void> {
+        try {
+            if (filePaths.length === 0) {
+                vscode.window.showInformationMessage('请先勾选要操作的文件');
+                return;
+            }
+            if (!name) {
+                vscode.window.showInformationMessage('请输入 changelist 名称');
+                return;
+            }
+
+            // 未版本控制的文件不能加入 changelist
+            const eligible = filePaths.filter(p => {
+                const st = this._fileStatuses.find(f => f.path === p);
+                return st && st.type !== 'unversioned';
+            });
+            const skipped = filePaths.length - eligible.length;
+            if (eligible.length === 0) {
+                vscode.window.showWarningMessage('未版本控制的文件不能加入 changelist，请先将其添加到版本控制（svn add）');
+                return;
+            }
+
+            await this.svnService.setChangelist(eligible, name);
+            if (skipped > 0) {
+                vscode.window.showInformationMessage(`已将 ${eligible.length} 个文件加入 changelist「${name}」（${skipped} 个未版本控制的文件已跳过）`);
+            } else {
+                vscode.window.showInformationMessage(`已将 ${eligible.length} 个文件加入 changelist「${name}」`);
+            }
+            await this._update();
+        } catch (error: any) {
+            vscode.window.showErrorMessage(`加入 changelist 失败: ${error.message}`);
+        }
+    }
+
+    /**
+     * 将选中的文件移出 changelist（issue #21）
+     */
+    private async _removeFromChangelist(filePaths: string[]): Promise<void> {
+        try {
+            if (filePaths.length === 0) {
+                vscode.window.showInformationMessage('请先勾选要操作的文件');
+                return;
+            }
+
+            await this.svnService.removeFromChangelist(filePaths);
+            vscode.window.showInformationMessage(`已将 ${filePaths.length} 个文件移出 changelist`);
+            await this._update();
+        } catch (error: any) {
+            vscode.window.showErrorMessage(`移出 changelist 失败: ${error.message}`);
         }
     }
 
@@ -501,6 +511,10 @@ export class SvnFolderCommitPanel {
                     case 'commit':
                         await this._commitFiles(message.files, message.message);
                         return;
+                    case 'showError':
+                        // webview 前端校验的错误提示（此前该消息无人处理，提示被静默丢弃）
+                        vscode.window.showErrorMessage(message.text || '未知错误');
+                        return;
                     case 'showDiff':
                         await this._showFileDiff(message.file);
                         return;
@@ -568,6 +582,12 @@ export class SvnFolderCommitPanel {
                     case 'deleteFiles':
                         await this._deleteFiles(message.files || []);
                         return;
+                    case 'setChangelist':
+                        await this._setChangelist(message.files || [], String(message.name || '').trim());
+                        return;
+                    case 'removeChangelist':
+                        await this._removeFromChangelist(message.files || []);
+                        return;
                 }
             },
             null,
@@ -603,6 +623,7 @@ export class SvnFolderCommitPanel {
                 FILE_LIST: this._renderFileList(this._fileStatuses),
                 PREFIX_OPTIONS: this._renderPrefixOptions(),
                 LATEST_PREFIX: this.logStorage.getLatestPrefix(),
+                CHANGELIST_OPTIONS: this._renderChangelistOptions(),
                 ALLOW_EMPTY_COMMIT_MESSAGE: vscode.workspace.getConfiguration('vscode-svn').get<boolean>('allowEmptyCommitMessage', false) ? 'true' : 'false'
             };
 
@@ -671,6 +692,8 @@ export class SvnFolderCommitPanel {
             
             const escapedFileName = fileName.replace(/</g, '&lt;').replace(/>/g, '&gt;');
             const escapedFilePath = filePath.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            // changelist 标记（issue #21）
+            const escapedChangelist = file.changelist ? file.changelist.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') : '';
 
             // 根据状态设置不同的样式类
             let statusClass = file.type;
@@ -688,13 +711,14 @@ export class SvnFolderCommitPanel {
             return `
                 <div class="file-item status-${statusClass}" 
                      data-path="${escapedPath}"
-                     data-type="${file.type}">
+                     data-type="${file.type}"
+                     ${file.changelist ? `data-changelist="${escapedChangelist}"` : ''}>
                     <span class="checkbox-cell">
                         <input type="checkbox" class="file-checkbox">
                     </span>
                     <span class="file-name" title="${escapedFileName}">${escapedFileName}</span>
                     <span class="file-path" title="${escapedFilePath}">${escapedFilePath}</span>
-                    <span class="file-status" title="${file.status}">${file.status}</span>
+                    <span class="file-status" title="${file.status}${file.changelist ? ' | changelist: ' + escapedChangelist : ''}">${file.status}${file.changelist ? `<span class="changelist-badge" title="changelist: ${escapedChangelist}">🏷${escapedChangelist}</span>` : ''}</span>
                     <span class="file-action">
                         ${file.type !== 'deleted' && file.type !== 'missing' ? `
                             <button class="diff-button" title="查看内联差异">差异</button>
@@ -714,9 +738,30 @@ export class SvnFolderCommitPanel {
 
     private _renderPrefixOptions(): string {
         const prefixes = this.logStorage.getPrefixes();
-        return prefixes.map(prefix => 
+        return prefixes.map(prefix =>
             `<option value="${prefix}">${prefix}</option>`
         ).join('');
+    }
+
+    /**
+     * 渲染 changelist 筛选下拉选项（issue #21）
+     * 值使用特殊标记：空=全部，__ungrouped__=未分组，其余为 changelist 名称
+     */
+    private _renderChangelistOptions(): string {
+        const names = [...new Set(
+            this._fileStatuses.map(f => f.changelist).filter((c): c is string => !!c)
+        )].sort((a, b) => a.localeCompare(b));
+
+        let html = '<option value="">全部文件</option>';
+        if (names.length > 0) {
+            html += `<option value="__ungrouped__">未分组 (${this._fileStatuses.filter(f => !f.changelist).length})</option>`;
+            html += names.map(name => {
+                const count = this._fileStatuses.filter(f => f.changelist === name).length;
+                const escaped = name.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                return `<option value="${escaped}">${escaped} (${count})</option>`;
+            }).join('');
+        }
+        return html;
     }
 
     private _getHtmlForDiffView(filePath: string, diff: string): string {

@@ -39,6 +39,12 @@
                 <button class="extension-action-btn" id="clearAllExtensions" title="清除全部选择">清空</button>
             </div>
         </div>
+        <div class="changelist-filter">
+            <label class="changelist-filter-label">Changelist：</label>
+            <select id="changelistFilter">
+                {{CHANGELIST_OPTIONS}}
+            </select>
+        </div>
         {{FILTER_INFO}}
     </div>
 
@@ -46,6 +52,10 @@
         <span id="selectedCount" class="selected-count">已选 0 项</span>
         <button id="revertSelectedButton" class="batch-button revert" title="恢复选中文件的本地修改（丢弃未提交的修改，不可撤销）" disabled>恢复选中</button>
         <button id="deleteSelectedButton" class="batch-button delete" title="删除选中的文件（版本控制中的文件计划删除，未版本控制的文件移入回收站）" disabled>删除选中</button>
+        <span class="batch-separator"></span>
+        <input type="text" id="changelistNameInput" class="changelist-input" placeholder="Changelist名称">
+        <button id="setChangelistButton" class="batch-button" title="将选中的文件加入指定的 changelist（未版本控制的文件会被跳过）">加入Changelist</button>
+        <button id="removeChangelistButton" class="batch-button" title="将选中的文件移出所在 changelist">移出Changelist</button>
     </div>
 
     <div class="file-list-container">

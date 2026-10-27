@@ -172,6 +172,59 @@ body {
     cursor: not-allowed;
 }
 
+.batch-separator {
+    flex: 0 0 1px;
+    height: 18px;
+    background-color: var(--vscode-panel-border);
+    margin: 0 4px;
+}
+
+/* changelist 筛选与标记（issue #21） */
+.changelist-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+}
+
+.changelist-filter-label {
+    color: var(--vscode-descriptionForeground);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.changelist-filter select {
+    background-color: var(--vscode-dropdown-background);
+    color: var(--vscode-dropdown-foreground);
+    border: 1px solid var(--vscode-dropdown-border);
+    padding: 2px 4px;
+    max-width: 240px;
+}
+
+.changelist-input {
+    flex: 0 1 160px;
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    padding: 3px 6px;
+    font-size: 12px;
+}
+
+.changelist-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 5px;
+    font-size: 10px;
+    border-radius: 8px;
+    background-color: var(--vscode-badge-background, rgba(90, 90, 90, 0.6));
+    color: var(--vscode-badge-foreground, #fff);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 110px;
+    vertical-align: middle;
+}
+
 .status-modified { color: #FFCC00; }
 .status-added { color: #73C991; }
 .status-deleted { color: #F14C4C; }
