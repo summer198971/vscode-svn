@@ -1,5 +1,24 @@
 # 更新日志
 
+## [4.15.0] - 2026-10-27
+
+### ✨ 新增
+
+- **文件夹提交面板支持 SVN changelist（关闭 issue #21）**
+  - 文件列表状态列显示所属 changelist 徽标
+  - 筛选区新增 Changelist 下拉框：可按 changelist / 未分组筛选文件
+  - 批量操作栏新增「加入Changelist / 移出Changelist」按钮，对勾选的文件批量分组（未版本控制的文件自动跳过）
+  - 底层新增 `svn changelist` / `svn changelist --remove` 批量操作，支持 `@` 字符文件名转义
+
+### 🐛 Bug 修复
+
+- **修复含 changelist 的工作副本在文件夹提交面板显示垃圾条目**
+  - `--- Changelist 'xxx':` 头行之前被误解析为一个"未版本控制"文件
+  - 仅因归属 changelist 而列出、实际无变更的文件（状态列为空白）之前被误判为"未版本控制"
+  - 状态解析逻辑抽取为独立模块 `svnStatusParser`，统一处理 changelist 分组、externals 过滤与树冲突行
+- **修复文件夹提交面板"请输入提交信息"等前端提示静默失败**
+  - webview 的 `showError` 消息此前无人处理，提示被丢弃；现在正确弹出错误提示
+
 ## [4.14.0] - 2026-10-27
 
 ### ✨ 新增

@@ -5,22 +5,26 @@
     const allowEmptyCommitMessage = {{ALLOW_EMPTY_COMMIT_MESSAGE}};
 
     // 从状态中恢复或初始化
-    const previousState = vscode.getState() || { 
+    const previousState = vscode.getState() || {
         selectedFiles: [],
         enabledTypes: ['modified', 'added', 'deleted', 'unversioned', 'missing'],
-        selectedExtensions: []
+        selectedExtensions: [],
+        selectedChangelist: ''
     };
-    
+
     let selectedFiles = new Set(previousState.selectedFiles);
     let enabledTypes = new Set(previousState.enabledTypes);
     let selectedExtensions = new Set(previousState.selectedExtensions);
-    
+    // changelist 筛选：''=全部，'__ungrouped__'=未分组，其余为名称（issue #21）
+    let selectedChangelist = previousState.selectedChangelist || '';
+
     // 保存状态的函数
     function saveState() {
         vscode.setState({
             selectedFiles: Array.from(selectedFiles),
             enabledTypes: Array.from(enabledTypes),
-            selectedExtensions: Array.from(selectedExtensions)
+            selectedExtensions: Array.from(selectedExtensions),
+            selectedChangelist: selectedChangelist
         });
     }
     
@@ -198,6 +202,30 @@
             deleteSelectedButton.addEventListener('click', deleteSelected);
         }
 
+        // changelist 筛选与操作（issue #21）
+        const changelistFilter = document.getElementById('changelistFilter');
+        if (changelistFilter) {
+            changelistFilter.value = selectedChangelist;
+            // 恢复的选中值可能已不存在于选项中，此时回到"全部"
+            if (changelistFilter.value !== selectedChangelist) {
+                selectedChangelist = '';
+                changelistFilter.value = '';
+            }
+            changelistFilter.addEventListener('change', (e) => {
+                selectedChangelist = e.target.value;
+                updateFileList();
+                saveState();
+            });
+        }
+        const setChangelistButton = document.getElementById('setChangelistButton');
+        if (setChangelistButton) {
+            setChangelistButton.addEventListener('click', assignChangelist);
+        }
+        const removeChangelistButton = document.getElementById('removeChangelistButton');
+        if (removeChangelistButton) {
+            removeChangelistButton.addEventListener('click', removeChangelist);
+        }
+
         // 提交按钮
         document.getElementById('submitButton').addEventListener('click', submitCommit);
         document.getElementById('generateAIButton').addEventListener('click', generateAILog);
@@ -210,18 +238,28 @@
     function updateFileList() {
         const fileItems = document.querySelectorAll('.file-item');
         let visibleCount = 0;
-        
+
         fileItems.forEach(item => {
             const type = item.getAttribute('data-type');
             const fileName = item.querySelector('.file-name').textContent;
-            const ext = fileName.includes('.') ? 
-                '.' + fileName.split('.').pop().toLowerCase() : 
+            const ext = fileName.includes('.') ?
+                '.' + fileName.split('.').pop().toLowerCase() :
                 '(无后缀)';
-            
+
             const typeMatch = enabledTypes.has(type);
             const extensionMatch = selectedExtensions.size === 0 || selectedExtensions.has(ext);
-            
-            if (typeMatch && extensionMatch) {
+            // changelist 筛选（issue #21）
+            const itemChangelist = item.getAttribute('data-changelist');
+            let changelistMatch;
+            if (!selectedChangelist) {
+                changelistMatch = true;
+            } else if (selectedChangelist === '__ungrouped__') {
+                changelistMatch = !itemChangelist;
+            } else {
+                changelistMatch = itemChangelist === selectedChangelist;
+            }
+
+            if (typeMatch && extensionMatch && changelistMatch) {
                 item.style.display = '';
                 visibleCount++;
             } else {
@@ -232,8 +270,9 @@
                 }
             }
         });
-        
+
         updateSelectAllCheckbox();
+        updateSelectedCount();
     }
 
     function updateCheckboxes() {
@@ -348,6 +387,32 @@
             return;
         }
         vscode.postMessage({ command: 'deleteFiles', files: files });
+    }
+
+    // 将选中的文件加入 changelist（issue #21）
+    function assignChangelist() {
+        const files = Array.from(selectedFiles);
+        if (files.length === 0) {
+            vscode.postMessage({ command: 'showError', text: '请先勾选要操作的文件' });
+            return;
+        }
+        const nameInput = document.getElementById('changelistNameInput');
+        const name = nameInput ? nameInput.value.trim() : '';
+        if (!name) {
+            vscode.postMessage({ command: 'showError', text: '请输入 changelist 名称' });
+            return;
+        }
+        vscode.postMessage({ command: 'setChangelist', files: files, name: name });
+    }
+
+    // 将选中的文件移出 changelist（issue #21）
+    function removeChangelist() {
+        const files = Array.from(selectedFiles);
+        if (files.length === 0) {
+            vscode.postMessage({ command: 'showError', text: '请先勾选要操作的文件' });
+            return;
+        }
+        vscode.postMessage({ command: 'removeChangelist', files: files });
     }
 
     // 更新已选数量提示与批量按钮可用状态

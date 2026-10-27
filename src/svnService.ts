@@ -1113,6 +1113,65 @@ export class SvnService {
   }
 
   /**
+   * 将文件加入 changelist（issue #21）
+   * @param filePaths 文件绝对路径列表
+   * @param name changelist 名称
+   */
+  public async setChangelist(filePaths: string[], name: string): Promise<void> {
+    if (filePaths.length === 0 || !name.trim()) {
+      return;
+    }
+    this.showOutputChannel('SVN changelist 操作');
+    this.outputChannel.appendLine(`将 ${filePaths.length} 个文件加入 changelist「${name}」:`);
+    filePaths.forEach((filePath, index) => {
+      this.outputChannel.appendLine(`  ${index + 1}. ${filePath}`);
+    });
+
+    try {
+      const pathArgs = filePaths.map(filePath => {
+        const escaped = path.basename(filePath).includes('@') ? `${filePath}@` : filePath;
+        return `"${escaped}"`;
+      }).join(' ');
+
+      const result = await this.executeSvnCommand(`changelist "${name.replace(/"/g, '')}" -- ${pathArgs}`, path.dirname(filePaths[0]));
+      this.outputChannel.appendLine(result);
+      this.outputChannel.appendLine('========== SVN changelist 操作完成 ==========');
+    } catch (error: any) {
+      this.outputChannel.appendLine(`错误: ${error.message}`);
+      throw new Error(`加入 changelist 失败: ${error.message}`);
+    }
+  }
+
+  /**
+   * 将文件移出 changelist（issue #21）
+   * @param filePaths 文件绝对路径列表
+   */
+  public async removeFromChangelist(filePaths: string[]): Promise<void> {
+    if (filePaths.length === 0) {
+      return;
+    }
+    this.showOutputChannel('SVN changelist 操作');
+    this.outputChannel.appendLine(`将 ${filePaths.length} 个文件移出 changelist:`);
+    filePaths.forEach((filePath, index) => {
+      this.outputChannel.appendLine(`  ${index + 1}. ${filePath}`);
+    });
+
+    try {
+      const pathArgs = filePaths.map(filePath => {
+        const escaped = path.basename(filePath).includes('@') ? `${filePath}@` : filePath;
+        return `"${escaped}"`;
+      }).join(' ');
+
+      const result = await this.executeSvnCommand(`changelist --remove -- ${pathArgs}`, path.dirname(filePaths[0]));
+      this.outputChannel.appendLine(result);
+      this.outputChannel.appendLine('========== SVN changelist 操作完成 ==========');
+    } catch (error: any) {
+      this.outputChannel.appendLine(`错误: ${error.message}`);
+      throw new Error(`移出 changelist 失败: ${error.message}`);
+    }
+  }
+
+  /**
    * 恢复文件夹到版本库状态（递归恢复）
    * @param folderPath 文件夹路径
    */
