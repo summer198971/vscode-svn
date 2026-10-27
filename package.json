@@ -2,7 +2,7 @@
   "name": "vscode-svn-ai",
   "displayName": "VSCode SVN - AI智能版本控制",
   "description": "🚀 全平台SVN智能插件：基于原生命令行工具，支持Windows/macOS/Linux，内置AI提交日志生成，可视化差异对比，100%开源透明。无需TortoiseSVN，轻量级高性能！",
-  "version": "4.11.0",
+  "version": "4.12.0",
   "publisher": "pengfeiSummer",
   "icon": "resources/icon.png",
   "engines": {
@@ -314,6 +314,11 @@
           "type": "boolean",
           "default": true,
           "description": "在日志列表中显示未提交到本地的修改"
+        },
+        "vscode-svn.allowEmptyCommitMessage": {
+          "type": "boolean",
+          "default": false,
+          "description": "允许空提交信息。开启后提交时可以不填写提交日志（SVN本身允许空提交信息，默认关闭以防止误提交）"
         },
         "vscode-svn.showMissingFiles": {
           "type": "boolean",
