@@ -249,7 +249,13 @@ export class SvnService {
    * @returns 命令执行结果
    */
   public async executeSvnCommand(command: string, path: string, useXml: boolean = false): Promise<string> {
-    return this.executeSvnCommandWithAuth(command, path, useXml);
+    const output = await this.executeSvnCommandWithAuth(command, path, useXml);
+    return this.processCommandOutput(output.toString('utf8'));
+  }
+
+  /** Read SVN file bytes without decoding; the editor handles the temporary file encoding. */
+  public async getFileContent(target: string, cwd: string): Promise<Buffer> {
+    return this.executeSvnCommandWithAuth(`cat "${target}"`, cwd, false, undefined, undefined, true);
   }
 
   /**
@@ -285,8 +291,9 @@ export class SvnService {
     path: string, 
     useXml: boolean = false,
     username?: string,
-    password?: string
-  ): Promise<string> {
+    password?: string,
+    binaryOutput: boolean = false
+  ): Promise<Buffer> {
     try {
       this.outputChannel.appendLine(`\n[executeSvnCommand] 执行SVN命令: svn ${command}`);
       this.outputChannel.appendLine(`[executeSvnCommand] 工作目录: ${path}`);
@@ -294,7 +301,7 @@ export class SvnService {
       // 步骤1: 首先尝试系统默认认证
       if (!username && !password) {
         try {
-          return await this._executeCommand(command, path, useXml);
+          return await this._executeCommand(command, path, useXml, undefined, undefined, binaryOutput);
         } catch (error: any) {
           // 检查是否是认证失败
           if (this._isAuthenticationError(error)) {
@@ -308,7 +315,7 @@ export class SvnService {
                 if (savedCredential) {
                   this.outputChannel.appendLine(`[executeSvnCommand] 找到保存的认证信息，用户名: ${savedCredential.username}`);
                   try {
-                    const result = await this._executeCommand(command, path, useXml, savedCredential.username, savedCredential.password);
+                    const result = await this._executeCommand(command, path, useXml, savedCredential.username, savedCredential.password, binaryOutput);
                     // 更新最后使用时间
                     await this.authService.updateLastUsed(repoUrl);
                     return result;
@@ -329,7 +336,7 @@ export class SvnService {
                 const authResult = await SvnAuthDialog.showAuthDialog(repoUrl || path);
                 if (authResult) {
                   try {
-                    const result = await this._executeCommand(command, path, useXml, authResult.username, authResult.password);
+                    const result = await this._executeCommand(command, path, useXml, authResult.username, authResult.password, binaryOutput);
                     
                     // 保存认证信息（如果用户选择保存）
                     if (authResult.saveCredentials && repoUrl && this.authService.getAutoSaveCredentials()) {
@@ -356,7 +363,7 @@ export class SvnService {
         }
       } else {
         // 如果已经提供了用户名密码，直接使用
-        return await this._executeCommand(command, path, useXml, username, password);
+        return await this._executeCommand(command, path, useXml, username, password, binaryOutput);
       }
     } catch (error: any) {
       this.outputChannel.appendLine(`[executeSvnCommand] 捕获到异常: ${error.message}`);
@@ -372,8 +379,9 @@ export class SvnService {
     path: string, 
     useXml: boolean = false,
     username?: string,
-    password?: string
-  ): Promise<string> {
+    password?: string,
+    binaryOutput: boolean = false
+  ): Promise<Buffer> {
     // 获取增强的环境变量配置
     const env = this.getEnhancedEnvironment();
     
@@ -417,21 +425,21 @@ export class SvnService {
     
     // 执行命令
     this.outputChannel.appendLine(`[_executeCommand] 开始执行命令...`);
-    return new Promise<string>((resolve, reject) => {
+    return new Promise<Buffer>((resolve, reject) => {
       const svnProcess = cp.exec(
         finalCommand, 
         { 
           cwd: path, 
           env,
           maxBuffer: 50 * 1024 * 1024, // 增加缓冲区大小到50MB
-          encoding: 'utf8' as BufferEncoding  // 显式指定编码
+          encoding: null // Keep file bytes intact; text commands are decoded by the caller
         },
         (error, stdout, stderr) => {
           if (error) {
             this.outputChannel.appendLine(`[_executeCommand] 命令执行失败，错误码: ${error.code}`);
-            if (stderr) {
+            if (stderr.length > 0) {
               // 尝试编码转换
-              const convertedStderr = this.processCommandOutput(stderr);
+              const convertedStderr = this.processCommandOutput(stderr.toString('utf8'));
               this.outputChannel.appendLine(`[_executeCommand] 错误输出: ${convertedStderr}`);
               reject(new Error(`SVN错误: ${convertedStderr}`));
             } else {
@@ -439,22 +447,18 @@ export class SvnService {
               reject(error);
             }
           } else {
-            // 处理输出编码
-            const processedOutput = this.processCommandOutput(stdout);
-            
-            this.outputChannel.appendLine(`[_executeCommand] 命令执行成功，输出长度: ${processedOutput.length} 字节`);
-            if (processedOutput.length < 1000) {
-              this.outputChannel.appendLine(`[_executeCommand] 输出内容: ${processedOutput.replace(/\n/g, '\\n')}`);
-            } else {
-              this.outputChannel.appendLine(`[_executeCommand] 输出内容前1000个字符: ${processedOutput.substring(0, 1000).replace(/\n/g, '\\n')}...`);
+            this.outputChannel.appendLine(`[_executeCommand] 命令执行成功，输出长度: ${stdout.length} 字节`);
+            if (!binaryOutput) {
+              const processedOutput = this.processCommandOutput(stdout.toString('utf8'));
+              this.outputChannel.appendLine(`[_executeCommand] 输出内容前1000个字符: ${processedOutput.substring(0, 1000).replace(/\n/g, '\\n')}`);
             }
-            resolve(processedOutput);
+            resolve(stdout);
           }
         }
       );
       
       // 处理实时输出
-      if (svnProcess.stdout) {
+      if (svnProcess.stdout && !binaryOutput) {
         svnProcess.stdout.on('data', (data) => {
           const processedData = this.processCommandOutput(data.toString());
           this.outputChannel.appendLine(`[_executeCommand] 命令输出: ${processedData.replace(/\n/g, '\\n')}`);

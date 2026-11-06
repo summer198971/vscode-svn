@@ -970,12 +970,12 @@ export class SvnLogPanel {
                     // 获取前一个版本的文件内容
                     const prevCommand = `cat "${fileUrl}@${prevRevision}"`;
                     this._log(`执行命令获取前一个版本内容: ${prevCommand}`);
-                    const prevContent = await this.svnService.executeSvnCommand(prevCommand, workingDir, false);
+                    const prevContent = await this.svnService.getFileContent(`${fileUrl}@${prevRevision}`, workingDir);
                     
                     // 获取当前版本的文件内容
                     const currentCommand = `cat "${fileUrl}@${revision}"`;
                     this._log(`执行命令获取当前版本内容: ${currentCommand}`);
-                    const currentContent = await this.svnService.executeSvnCommand(currentCommand, workingDir, false);
+                    const currentContent = await this.svnService.getFileContent(`${fileUrl}@${revision}`, workingDir);
                     
                     // 写入临时文件
                     fs.writeFileSync(prevFilePath, prevContent);

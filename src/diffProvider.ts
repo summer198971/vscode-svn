@@ -460,7 +460,7 @@ export class SvnDiffProvider {
         this.outputChannel.appendLine(`[showDiff] 获取 SVN 版本内容...`);
         const cwd = path.dirname(filePath);
         const fileName = path.basename(filePath);
-        const baseContent = await this.svnService.executeSvnCommand(`cat "${fileName}"`, cwd);
+        const baseContent = await this.svnService.getFileContent(fileName, cwd);
         
         // 写入 SVN 版本内容到临时文件
         this.outputChannel.appendLine(`[showDiff] 写入 SVN 版本内容到临时文件: ${tempFilePath}`);
