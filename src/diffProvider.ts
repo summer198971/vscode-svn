@@ -390,7 +390,7 @@ export class SvnDiffProvider {
     try {
       const status = await this.svnService.getFileStatus(filePath);
       this.outputChannel.appendLine(`[hasChanges] 文件SVN状态: ${status}`);
-      const hasChanges = status === '已修改' || status === '已添加' || status === '已删除' || status === '已替换';
+      const hasChanges = status === '已修改' || status === '已添加' || status === '已删除' || status === '已替换' || status === '冲突';
       this.outputChannel.appendLine(`[hasChanges] 基于状态判断是否有修改: ${hasChanges}`);
       return hasChanges;
     } catch (error: any) {
